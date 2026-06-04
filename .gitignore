@@ -1,0 +1,17 @@
+# jupyter checkpoints:
+.ipynb_checkpoints
+
+# profiling results
+examples/profile.pb.gz
+examples/alloc-profile.pb.gz
+examples/*.pb.gz
+
+# scip logs
+examples/scip.log
+scip.log
+
+# sh scripts
+scripts/bash/
+
+# future research:
+examples/SetPartitioning.ipynb
