@@ -84,6 +84,7 @@ This folder contains scripts used for experiments in the article. You may easily
 - The current implementation focuses on binary variables and supports degeneracy rank 1 workflows.
 - The `future.jl` file contains planned generic methods for non-binary variables and higher degeneracies.
 - The repository includes experimental notebooks and prepared datasets for benchmarking and analysis.
+Due to the refactoring of the folder structure, you may encounter some issues with paths to raw data or cached results. In such cases, check the paths (all relevant data is located in the `data` folder), or contact sergeyyoudin@gmail.com
 
 ## Compatibility
 
@@ -92,3 +93,7 @@ The package dependencies are specified in `Project.toml`. It is tested with Juli
 ## Citation
 
 The citation is upcoming
+
+## Contacts
+With comments, questions, and suggestions, please contact sergeyyoudin@gmail.com
+
