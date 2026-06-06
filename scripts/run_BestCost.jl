@@ -33,7 +33,7 @@ Run parallel experiments for the "best cost" strategy across multiple problem si
 1. Creates a nested dictionary to store results indexed by strategy → n → problem index
 2. Iterates over problem sizes n = 12, 13, 14, 15, 16
 3. For each n, runs 50 random instances of the assignment problem
-4. Uses bilinear forms loaded from `data/random_bilinear_forms/train/q_\$(n)_\$(i)_r=\$(r).jld2`
+4. Uses bilinear forms loaded from `data/random_bilinear_forms/q_\$(n)_\$(i)_r=\$(r).jld2`
 5. Solves each problem using the specified strategy with the solver parameters
 6. Saves results and parameters to JLD2 files after each iteration
 
@@ -86,7 +86,7 @@ function run_parallel_experiments()
                 try
                     solver_params = SolverParams(NUM_GLOBAL_ITER=20, KEEP_NUM_WORST=0.0, LEARNING_RATE=0.05)
                     q = lock(res_lock) do 
-                        load("../data/random_bilinear_forms/train/q_$(n)_$(i)_r=$(r).jld2")["q"]
+                        load("../data/random_bilinear_forms/q_$(n)_$(i)_r=$(r).jld2")["q"]
                     end
                     local_sampler! = (X::AbstractMatrix{Int}) -> fill_assignment_vectors!(X, n)
                     opt_problem = OhMyU1.OptimizationProblem(A=A, b=b, cost_function=x -> x' * q * x, name="train_$(n)_$(i)")
