@@ -91,4 +91,12 @@ The package dependencies are specified in `Project.toml`. It is tested with Juli
 
 ## Citation
 
-The citation is upcoming
+### BibTex record:
+@inproceedings{
+iudin2026explorationexploitation,
+title={Exploration-Exploitation Generative Framework for Constrained Combinatorial Optimization with Tensor Trains},
+author={Sergei Iudin and Mikhail Podobrii and Dmitry Zheltkov and Stanislav Moiseev},
+booktitle={ICML'26 workshop on CoLoRAI - The 2nd Workshop on Connecting Low-rank Representations in AI},
+year={2026},
+url={https://openreview.net/forum?id=57YDrXbZuD}
+}
