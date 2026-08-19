@@ -84,13 +84,13 @@ This folder contains scripts used for experiments in the article. You may easily
 - The current implementation focuses on binary variables and supports degeneracy rank 1 workflows.
 - The `future.jl` file contains planned generic methods for non-binary variables and higher degeneracies.
 - The repository includes experimental notebooks and prepared datasets for benchmarking and analysis.
+Due to the refactoring of the folder structure, you may encounter some issues with paths to raw data or cached results. In such cases, check the paths (all relevant data is located in the `data` folder), or contact sergeyyoudin@gmail.com
 
 ## Compatibility
 
 The package dependencies are specified in `Project.toml`. It is tested with Julia-compatible versions of packages such as `JuMP`, `GLPK`, `SCIP`, `Plots`, and `JLD2`.
 
 ## Citation
-
 ### BibTex record:
 @inproceedings{
 iudin2026explorationexploitation,
@@ -100,3 +100,6 @@ booktitle={ICML'26 workshop on CoLoRAI - The 2nd Workshop on Connecting Low-rank
 year={2026},
 url={https://openreview.net/forum?id=57YDrXbZuD}
 }
+
+## Contacts
+With comments, questions, and suggestions, please contact sergeyyoudin@gmail.com
