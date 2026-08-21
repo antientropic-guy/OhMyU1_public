@@ -9,6 +9,7 @@ examples/*.pb.gz
 # scip logs
 examples/scip.log
 scip.log
+examples/test_notebook.ipynb
 
 # sh scripts
 scripts/bash/

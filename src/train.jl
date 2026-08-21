@@ -40,11 +40,13 @@ function sweep_right_nondeg!(mps::U1MPS{S, Y}, x_samples::Matrix{S}, probs::Vect
         merged_cores = MergedCores(l_core, r_core)
         l_matrix = merged_cores.left_matrix
         r_matrix = merged_cores.right_matrix
-        z_i_norm = u1_norm(mps)
+        z_i_norm = u1_norm(mps) ^ 2
 
         # Part 1: Z'|Z:
+        multiply_factor = (1 - 2 * alpha / z_i_norm)
         for c in keys(merged_cores.Blocks)
-            merged_cores.Blocks[c] .-= alpha * merged_cores.Blocks[c] ./ z_i_norm
+            # merged_cores.Blocks[c] .-= alpha * merged_cores.Blocks[c] ./ z_i_norm
+            merged_cores.Blocks[c] .*= multiply_factor
         end
 
         # Part 2: -2P(x)MPS'(x)/MPS(x)
@@ -109,12 +111,13 @@ function sweep_left_nondeg!(mps::U1MPS{S, Y}, x_samples::Matrix{S}, probs::Vecto
         merged_cores = MergedCores(l_core, r_core)
         l_matrix = merged_cores.left_matrix
         r_matrix = merged_cores.right_matrix
-        z_i_norm = u1_norm(mps)
+        z_i_norm = u1_norm(mps) ^ 2
 
         # Part 1: Z'|Z:
+        multiply_factor = (1 - 2 * alpha / z_i_norm)
         for c in keys(merged_cores.Blocks)
-            # merged_cores.Blocks[c] .-= alpha * merged_cores.Blocks[c] ./ z_i_norm
-            merged_cores.Blocks[c] .*= (1 - alpha / z_i_norm)
+            # merged_cores.Blocks[c] .-= 2 alpha * merged_cores.Blocks[c] ./ z_i_norm
+            merged_cores.Blocks[c] .*= multiply_factor
         end
 
         # Part 2: -2P(x)MPS'(x)/MPS(x)
