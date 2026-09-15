@@ -16,3 +16,10 @@ scripts/bash/
 
 # future research:
 examples/SetPartitioning.ipynb
+
+# sh scripts:
+*.sh
+
+# sh outputs:
+*.err
+*.out

@@ -86,7 +86,7 @@ function run_parallel_experiments()
                 try
                     solver_params = SolverParams(NUM_GLOBAL_ITER=20, KEEP_NUM_WORST=0.0, LEARNING_RATE=0.05)
                     q = lock(res_lock) do 
-                        load("../data/random_bilinear_forms/q_$(n)_$(i)_r=$(r).jld2")["q"]
+                        load("data/random_bilinear_forms/q_$(n)_$(i)_r=$(r).jld2")["q"]
                     end
                     local_sampler! = (X::AbstractMatrix{Int}) -> fill_assignment_vectors!(X, n)
                     opt_problem = OhMyU1.OptimizationProblem(A=A, b=b, cost_function=x -> x' * q * x, name="train_$(n)_$(i)")
@@ -94,7 +94,7 @@ function run_parallel_experiments()
                     parallel=false, print_stats=false)
                     lock(res_lock) do
                         res_dict[strategy][n][i] = res
-                        @save "../data/random_assignment/res_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_quadratic.jld2" res_dict
+                        @save "data/random_assignment/res_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_quadratic.jld2" res_dict
                         @save "data/random_assignment/params_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_quadratic.jld2" solver_params
                         @info "Finished: n=$n, i=$i"
                     end

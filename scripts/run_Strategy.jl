@@ -70,10 +70,12 @@ function run_parallel_experiments()
 
     n_sizes = [12, 13, 14, 15, 16]
     r = 7
-    strategy = "mixed" # available strategies: "mixed" (Mixed Selection), "weighted rank", "best nonzero mixed" (Best Cost + Graph Distance Filter)
+    strategy = "best nonzero mixed" # available strategies: "mixed" (Mixed Selection), "weighted rank", "best nonzero mixed" (Best Cost + Graph Distance Filter)
     diversify = false
     barrier = false
 
+    # mixed_proportion_vec = [0.1, 0.2, 0.3, 0.4]
+    # mixed_proportion_vec = [0.3]
     mixed_proportion_vec = [0.1, 0.2, 0.3, 0.4]
 
     # Fill res dict with dump values:
@@ -97,16 +99,16 @@ function run_parallel_experiments()
                     try
                         solver_params = SolverParams(NUM_GLOBAL_ITER=20, KEEP_NUM_WORST=0.0, LEARNING_RATE=0.05)
                         q = lock(res_lock) do 
-                            load("../data/random_bilinear_forms/q_$(n)_$(i)_r=$(r).jld2")["q"]
+                            load("data/random_bilinear_forms/q_$(n)_$(i)_r=$(r).jld2")["q"]
                         end
                         local_sampler! = (X::AbstractMatrix{Int}) -> fill_assignment_vectors!(X, n)
                         opt_problem = OhMyU1.OptimizationProblem(A=A, b=b, cost_function=x -> x' * q * x, name="train_$(n)_$(i)")
                         res = solve(opt_problem, local_sampler!, solver_params, strategy, diversify=diversify, barrier=barrier,
-                        parallel=false, print_stats=false)
+                        parallel=false, print_stats=false, mixed_proportion=w, rank_weight=w)
                         lock(res_lock) do
                             res_dict[strategy][w][n][i] = res
-                            @save "../data/random_assignment/res_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_quadratic.jld2" res_dict
-                            @save "../data/random_assignment/params_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_quadratic.jld2" solver_params
+                            @save "data/random_assignment/res_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_w=0.1_0.2_0.3_0.4_quadratic.jld2" res_dict
+                            @save "data/random_assignment/params_$(strategy)_barrier_$(barrier)_div_$(diversify)_r=$(r)_w=0.1_0.2_0.3_0.4_quadratic.jld2" solver_params
                             @info "Finished: n=$n, i=$i"
                         end
                     catch e
