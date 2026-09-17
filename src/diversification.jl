@@ -50,7 +50,7 @@ function diversify!(mps::U1MPS{S, N}) where {S<:Integer, N<:AbstractFloat}
 
 
 
-        for left_link_charge in left_link_index.Charges
+        for left_link_charge in _sorted_charges(left_link_index.Charges)
             for left_x in left_site_ind.FlatDomain
                 for right_x in right_site_ind.FlatDomain
                     left_site_charge = left_site_ind.A_vec .* left_x

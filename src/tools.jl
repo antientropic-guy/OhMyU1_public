@@ -46,13 +46,26 @@ Samples random feasible points satisfying Ax = b
 - Matrix{T}`: Feasible points (in columns).
 
 """
-function sample_feasible_lp(A::Matrix{T}, b::Vector{T}, count; time_limit::Float64=5.0) where {T<:Integer}
+function _configure_scip_reproducibility!(model::Model, rng::AbstractRNG)
+    max_scip_seed = UInt32(typemax(Int32))
+    next_seed() = Int(rand(rng, UInt32) % max_scip_seed)
+    set_optimizer_attribute(model, "randomization/randomseedshift", next_seed())
+    set_optimizer_attribute(model, "randomization/permutationseed", next_seed())
+    set_optimizer_attribute(model, "randomization/lpseed", next_seed())
+    set_optimizer_attribute(model, "parallel/mode", 1)
+    set_optimizer_attribute(model, "parallel/maxnthreads", 1)
+    return nothing
+end
+
+function sample_feasible_lp(rng::AbstractRNG, A::Matrix{T}, b::Vector{T}, count;
+                            time_limit::Float64=5.0) where {T<:Integer}
     n = size(A, 2)
     m = size(A, 1)
     results = Matrix{T}(undef, n, count)
     n_filled_cols = 0
 
     model = Model(SCIP.Optimizer)
+    _configure_scip_reproducibility!(model, rng)
     set_optimizer_attribute(model, "limits/time", time_limit)   # 5s timelimit
     set_optimizer_attribute(model, "display/verblevel", 4)
     # set_optimizer_attribute(model, "logfile", "scip.log")
@@ -64,7 +77,7 @@ function sample_feasible_lp(A::Matrix{T}, b::Vector{T}, count; time_limit::Float
     end
 
     for i in 1:count
-        c = rand(n) .- 0.5
+        c = rand(rng, n) .- 0.5
         for j in 1:n
              set_objective_coefficient(model, x[j], c[j])
         end
@@ -86,6 +99,9 @@ function sample_feasible_lp(A::Matrix{T}, b::Vector{T}, count; time_limit::Float
     return reduce(hcat, results)
 end
 
+sample_feasible_lp(A::Matrix{T}, b::Vector{T}, count; kwargs...) where {T<:Integer} =
+    sample_feasible_lp(Random.default_rng(), A, b, count; kwargs...)
+
 
 """
     sample_feasible_lp(A::Matrix{T}, b::Vector{T}, results::Matrix{T}, count) where {T<:Integer} -> nothing
@@ -102,12 +118,15 @@ Samples random feasible points satisfying Ax = b in pre-allocated memory.
 - nothing.
 
 """
-function sample_feasible_lp!(A::Matrix{T}, b::Vector{T}, results::Matrix{T}, count::Int; time_limit::Float64=5.0) where {T<:Integer}
+function sample_feasible_lp!(rng::AbstractRNG, A::Matrix{T}, b::Vector{T},
+                             results::AbstractMatrix{T}, count::Int;
+                             time_limit::Float64=5.0) where {T<:Integer}
     n = size(A, 2)
     m = size(A, 1)
     n_filled_cols = 0
 
     model = Model(SCIP.Optimizer)
+    _configure_scip_reproducibility!(model, rng)
     set_optimizer_attribute(model, "limits/time", time_limit)   # time limit in seconds
     set_optimizer_attribute(model, "display/verblevel", 4)
         @variable(model, 0 <= x[1:n] <= 1, Int)
@@ -117,7 +136,7 @@ function sample_feasible_lp!(A::Matrix{T}, b::Vector{T}, results::Matrix{T}, cou
         end
 
     for i in 1:count
-        c = rand(n) .- 0.5
+        c = rand(rng, n) .- 0.5
         for j in 1:n
              set_objective_coefficient(model, x[j], c[j])
         end
@@ -137,6 +156,11 @@ function sample_feasible_lp!(A::Matrix{T}, b::Vector{T}, results::Matrix{T}, cou
     return nothing
 end
 
+
+sample_feasible_lp!(A::Matrix{T}, b::Vector{T}, results::AbstractMatrix{T}, count::Int;
+                    kwargs...) where {T<:Integer} =
+    sample_feasible_lp!(Random.default_rng(), A, b, results, count; kwargs...)
+
 # Vector of boltzman probabilities
 function boltzman_probability(cost_function::Function, x_vector, temperature::Number, norm::Number, min_cost::Number)
     return exp(-(cost_function(x_vector) - min_cost) / temperature) / norm
@@ -150,15 +174,18 @@ end
 
 # Random tools:
 
-function random_bilinear_form(N::Int, density::Float64, r::Number)
-    rand_func = (dims...) -> (rand(dims...) .* (2r)) .- r
-    Q = sprand(N, N, density, rand_func)
+function random_bilinear_form(rng::AbstractRNG, N::Int, density::Float64, r::Number)
+    Q = sprand(rng, N, N, density)
+    Q.nzval .= rand(rng, length(Q.nzval)) .* (2r) .- r
     Q = 0.5 * (Q + Q')
     return Q
 end
 
-function random_assignment_vector(n::Int)
-    p = randperm(n)
+random_bilinear_form(N::Int, density::Float64, r::Number) =
+    random_bilinear_form(Random.default_rng(), N, density, r)
+
+function random_assignment_vector(rng::AbstractRNG, n::Int)
+    p = randperm(rng, n)
     x = zeros(Int, n^2)
     for i in 1:n
         j = p[i]
@@ -168,10 +195,15 @@ function random_assignment_vector(n::Int)
     return x
 end
 
-function fill_assignment_vectors_parallel!(X::Matrix{Int}, n::Int)
+random_assignment_vector(n::Int) = random_assignment_vector(Random.default_rng(), n)
+
+function fill_assignment_vectors_parallel!(rng::AbstractRNG, X::AbstractMatrix{Int}, n::Int)
     M = size(X, 2)
+    sample_seeds = rand(rng, UInt64, M)
     Threads.@threads for k in 1:M
-        p = randperm(n)
+        column_rng = Random.Xoshiro(sample_seeds[k])
+        p = randperm(column_rng, n)
+        fill!(@view(X[:, k]), 0)
         for i in 1:n
             j = p[i]
             idx = (i - 1) * n + j
@@ -180,10 +212,14 @@ function fill_assignment_vectors_parallel!(X::Matrix{Int}, n::Int)
     end
 end
 
-function fill_assignment_vectors!(X::AbstractMatrix{Int}, n::Int)
+fill_assignment_vectors_parallel!(X::AbstractMatrix{Int}, n::Int) =
+    fill_assignment_vectors_parallel!(Random.default_rng(), X, n)
+
+function fill_assignment_vectors!(rng::AbstractRNG, X::AbstractMatrix{Int}, n::Int)
     M = size(X, 2)
     for k in 1:M
-        p = randperm(n)
+        p = randperm(rng, n)
+        fill!(@view(X[:, k]), 0)
         for i in 1:n
             j = p[i]
             idx = (i - 1) * n + j
@@ -191,13 +227,16 @@ function fill_assignment_vectors!(X::AbstractMatrix{Int}, n::Int)
         end
     end
 end
+
+fill_assignment_vectors!(X::AbstractMatrix{Int}, n::Int) =
+    fill_assignment_vectors!(Random.default_rng(), X, n)
 
 """
 Takes a matrix of (column) samples and a vector of pre-computed costs for these samples (same order), and returns the k best samples according to the costs.
 """
 function pick_best_samples(samples::AbstractMatrix{Int}, k::Int, costs_vector::AbstractVector; rev=false)
     new_k = min(size(samples, 2), k)
-    idx = partialsortperm(costs_vector, 1:new_k, rev=rev)
+    idx = sortperm(costs_vector; rev=rev, alg=Base.Sort.MergeSort)[1:new_k]
     return copy(view(samples, :, idx))
 end
 
@@ -205,9 +244,10 @@ function pick_mixed_samples(samples::AbstractMatrix{Int}, k_best::Int, k_worst::
     n = length(costs_vector)
     k_best = min(n, k_best)
     k_worst = min(n - k_best, k_worst)
-    idx_best = partialsortperm(costs_vector, 1:k_best, rev=rev)
+    ordered = sortperm(costs_vector; rev=rev, alg=Base.Sort.MergeSort)
+    idx_best = ordered[1:k_best]
     if k_worst > 0
-        idx_worst = partialsortperm(costs_vector, 1:k_worst, rev=!rev)
+        idx_worst = reverse(ordered)[1:k_worst]
         idx = vcat(idx_best, idx_worst)
     else
         idx = idx_best
@@ -226,11 +266,15 @@ function assignment_matrix(n::Int)
     return A
 end
 
-function generate_random_matrix_vector(m, N, r)
-    A = rand(-r:r, m, N)
-    b = rand(-r:r, m)      
+function generate_random_matrix_vector(rng::AbstractRNG, m, N, r)
+    A = rand(rng, -r:r, m, N)
+    b = rand(rng, -r:r, m)
     return A, b
 end
+
+
+generate_random_matrix_vector(m, N, r) =
+    generate_random_matrix_vector(Random.default_rng(), m, N, r)
 
 function allcols_equal(A::Matrix{Int}, v::Vector{Int})
     @inbounds for j in 1:size(A, 2)

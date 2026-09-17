@@ -362,7 +362,7 @@ Sorts samples in T according to the cost function and keeps only num_to_keep bes
 function sort_and_truncate(T::Matrix{Int}, cost_function::Function, num_to_keep::Int)
     n_cols = size(T, 2)
     costs = [cost_function(view(T, :, i)) for i in 1:n_cols]
-    perm = partialsortperm(costs, 1:num_to_keep)
+    perm = sortperm(costs; alg=Base.Sort.MergeSort)[1:num_to_keep]
     return T[:, perm], costs[perm]
 end 
 
@@ -381,10 +381,33 @@ function add_worst_samples(T::Matrix{Int}, sp::SolverParams)
     return T, num_to_keep_worst
 end
 
+"""Call an RNG-aware sampler when available, with a deterministic fallback for legacy one-argument samplers."""
+function _call_feasible_sampler!(feasible_sampler!::Function, rng::AbstractRNG, destination)
+    if applicable(feasible_sampler!, rng, destination)
+        feasible_sampler!(rng, destination)
+    elseif applicable(feasible_sampler!, destination)
+        # `rand` in legacy callbacks uses the current task's default RNG. Give
+        # every invocation a seed derived from solve's dedicated feasible stream.
+        Random.seed!(rand(rng, UInt64))
+        feasible_sampler!(destination)
+    else
+        throw(ArgumentError("feasible_sampler! must accept (rng, destination) or (destination)"))
+    end
+    return nothing
+end
 
 
+"""
+    solve(opt_problem, feasible_sampler!, solver_params, sorting_crit; seed=0, ...)
+
+Solve an optimization problem reproducibly. `seed` initializes independent RNG
+streams for feasible-data generation and MPS sampling. Prefer an RNG-aware
+sampler with signature `feasible_sampler!(rng, destination)`; legacy one-argument
+samplers remain deterministic when they use Julia's default RNG.
+"""
 function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, solver_params::SolverParams, sorting_crit::String; 
-    diversify=false, barrier=false, mixed_proportion::Float64=0.5, rank_weight::Float64=0.5, parallel::Bool=true, print_stats::Bool=true, debug::Bool=false)
+    diversify=false, barrier=false, mixed_proportion::Float64=0.5, rank_weight::Float64=0.5,
+    parallel::Bool=true, print_stats::Bool=true, debug::Bool=false, seed::Integer=0)
 
     # Global charges updater:
     function UpdateGlobalCharges!(mps::U1MPS{T, N}) where {T<:Integer, N<:AbstractFloat}
@@ -396,6 +419,9 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
     sp = solver_params
     cost_function = opt_problem.cost_function
     n_vars, _ = opt_problem.num_vars, opt_problem.num_constraints
+    master_rng = Random.Xoshiro(seed)
+    feasible_rng = Random.Xoshiro(rand(master_rng, UInt64))
+    mps_rng = Random.Xoshiro(rand(master_rng, UInt64))
 
     # Global charges storage:
     global_charges_memorized = [Set{Vector{Int}}() for _ in 1:n_vars]
@@ -404,7 +430,7 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
 
     # Initial feasible dataset
     T = zeros(Int, n_vars, sp.NUM_FEASIBLE_SAMPLES)
-    feasible_sampler!(T)
+    _call_feasible_sampler!(feasible_sampler!, feasible_rng, T)
     T, costs = sort_and_truncate(T, cost_function, sp.NUM_FEASIBLE_SAMPLES)
 
     num_to_keep = floor(Int, sp.UTILITY_FRACTION * size(T, 2))
@@ -429,6 +455,7 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         println("Strategy for picking new samples: ", sorting_crit)
         println("Diversification: ", diversify)
         println("Barrier: ", barrier)
+        println("Random seed: ", seed)
     end
 
     # Main loop
@@ -452,9 +479,9 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         # Sampling
         fill!(samples, 0)  # clear memory buf;
         if parallel
-            sample_nondeg_parallel!(mps, samples, sp.NUM_MPS_SAMPLES)
+            sample_nondeg_parallel!(mps_rng, mps, samples, sp.NUM_MPS_SAMPLES)
         else
-            sample_nondeg!(mps, samples, sp.NUM_MPS_SAMPLES)
+            sample_nondeg!(mps_rng, mps, samples, sp.NUM_MPS_SAMPLES)
         end
 
         # Keep best samples from previous iteration
@@ -487,7 +514,8 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
 
         X[:, 1:size(T, 2)] .= T[:, 1:end]  # copy mps samples to X
         X[:, size(T, 2)+1:end] .= 0  # fill zeros for feasible data (must be done for assignment feasible sampler;)
-        feasible_sampler!(@view X[:, size(T, 2)+1:end])  # add random feasible samples for diversification;
+        _call_feasible_sampler!(feasible_sampler!, feasible_rng,
+                                @view X[:, size(T, 2)+1:end])  # add random feasible samples for diversification;
 
         if debug
             println("Best random cost: ", minimum([cost_function(x) for x in eachcol(X[:, size(T, 2)+1:end])]))

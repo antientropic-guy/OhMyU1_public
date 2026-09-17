@@ -1,4 +1,13 @@
 import Base: getindex
+
+# Dict and Set traversal order is not part of Julia's API. Canonical iteration
+# prevents hash-table layout from changing floating-point reduction/SVD order
+# between otherwise identical runs.
+_canonical_charge_key(charge::AbstractVector) = Tuple(charge)
+_canonical_charge_key(charges::Tuple) = map(_canonical_charge_key, charges)
+_sorted_charges(charges) = sort!(collect(charges); by=_canonical_charge_key)
+_sorted_block_keys(blocks) = sort!(collect(keys(blocks)); by=_canonical_charge_key)
+
 # Index types;
 abstract type IndexType end
 
@@ -259,7 +268,7 @@ function init_u1_mps(::Type{Y}, link_indices::Vector{ChargeIndex{S}},
             site_deg = site_cards[i]
         end
             
-        for left_charge in left_index.Charges
+        for left_charge in _sorted_charges(left_index.Charges)
             for site_charge in site_index.Charges
                 right_charge = left_charge .- site_charge
                 if in(right_charge, link_indices[i+1].Charges)
@@ -296,7 +305,7 @@ function collect_left(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     split_indices_dict = Dict{Vector{S}, Vector{Tuple{S, S}}}()
 
     # Dictionary for reshaping:
-    for charges_tuple in keys(core.Blocks)
+    for charges_tuple in _sorted_block_keys(core.Blocks)
         left_link_charge, site_charge, charge = charges_tuple
         list_ref = get(charges_degeneracy_dict, charge, nothing)
         if list_ref === nothing
@@ -309,7 +318,7 @@ function collect_left(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     end
 
     # Define blocks:
-    for charge in keys(charges_degeneracy_dict)
+    for charge in _sorted_block_keys(charges_degeneracy_dict)
         all_sites = charges_degeneracy_dict[charge]
         blocks = Vector{Matrix{Y}}(undef, length(all_sites))
         x_bounds_dict_charge = x_bounds_dict[charge]
@@ -350,7 +359,7 @@ function collect_right(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     split_indices_dict = Dict{Vector{S}, Vector{Tuple{S, S}}}()
     
     # Dictionary for reshaping:
-    for charges_tuple in keys(core.Blocks)
+    for charges_tuple in _sorted_block_keys(core.Blocks)
         (charge, site_charge, right_link_charge) = charges_tuple
         list_ref = get(charges_degeneracy_dict, charge, nothing)
         if list_ref === nothing
@@ -363,7 +372,7 @@ function collect_right(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     end
 
     # Define blocks:
-    for charge in keys(charges_degeneracy_dict)
+    for charge in _sorted_block_keys(charges_degeneracy_dict)
         all_sites = charges_degeneracy_dict[charge]
         x_bounds_dict_charge = x_bounds_dict[charge]
         split_indices_dict_charge = split_indices_dict[charge]
@@ -400,7 +409,7 @@ function split_left(m::U1Matrix{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     N_constr = length(flux)
     blocks = Dict{Tuple{Vector{S}, Vector{S}, Vector{S}}, Array{Y}}()
 
-    for charge in keys(m.Blocks)
+    for charge in _sorted_block_keys(m.Blocks)
         for (i, x) in enumerate(m.DegeneracyDict[charge])
             x_splits = m.XboundsDict[charge] 
             a_x_splits = m.SplitIndicesDict[charge][i]
@@ -430,7 +439,7 @@ function split_right(m::U1Matrix{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     N_constr = length(flux)
     blocks = Dict{Tuple{Vector{S}, Vector{S}, Vector{S}}, Array{Y}}()
 
-    for charge in keys(m.Blocks)
+    for charge in _sorted_block_keys(m.Blocks)
         for (i, x) in enumerate(m.DegeneracyDict[charge])
             x_splits = m.XboundsDict[charge] 
             x_a_splits = m.SplitIndicesDict[charge][i]
@@ -455,7 +464,7 @@ mutable struct MergedCores{S, Y} <: AbstractU1Tensor
         N_constr = length(A.Flux)
         blocks = Dict{Vector{S}, Array{Y}}()
 
-        for charge in keys(left_matrix.Blocks)
+        for charge in _sorted_block_keys(left_matrix.Blocks)
             l_block = left_matrix.Blocks[charge]
             r_block = right_matrix.Blocks[charge]
             blocks[charge] = l_block * r_block
@@ -482,7 +491,7 @@ function u1_lq(m::U1Matrix{S, Y}) where {S<: Integer, Y<:AbstractFloat}
     blocks_Q = Dict{Vector{S}, Array{Y}}()
     blocks_L = Dict{Vector{S}, Array{Y}}()
 
-    for charge in keys(m.Blocks)
+    for charge in _sorted_block_keys(m.Blocks)
         L_c, Q_c = lq(m.Blocks[charge])
         blocks_Q[charge] = Q_c
         blocks_L[charge] = L_c
@@ -518,7 +527,7 @@ function orthogonalize!(mps::U1MPS{S, Y}) where {S<:Integer, Y<:AbstractFloat}
             reshaped_core.Blocks = blocks_Q
             mps.Cores[n] = split_right(reshaped_core)
             blocks = mps.Cores[n-1].Blocks
-            for charge_tuple in keys(blocks)
+            for charge_tuple in _sorted_block_keys(blocks)
                 c1, x, c2 = charge_tuple
                 previous_block = blocks[charge_tuple]
                 
@@ -563,8 +572,8 @@ Compute Frobenius (L2) norm of a U1 core tensor.
 """
 function u1_norm(core::U1Core)
     n = 0
-    for block in values(core.Blocks)
-        n += sum(abs2, block)
+    for key in _sorted_block_keys(core.Blocks)
+        n += sum(abs2, core.Blocks[key])
     end
     return sqrt(n)
 end
@@ -735,158 +744,101 @@ function getval(core::U1Core{S, Y}, i::S, right_charge::Vector{S}) where {S<:Int
     end
 end
 
+function _sample_nondeg_column!(rng::AbstractRNG, mps::U1MPS{S, Y},
+                                mem_buf::Matrix{S}, sample_iter::Int,
+                                v_vec::Vector{Y}, probability_vec::Vector{Y},
+                                mps_mem::Vector{S}) where {S<:Integer, Y<:AbstractFloat}
+    core1 = mps.Cores[1]
+    b_charge = first(core1.Indices[1].Charges)
+    x1_domain = core1.Indices[2].FlatDomain
+
+    for (i, x1) in enumerate(x1_domain)
+        v_vec[i] = getval(mps_mem, core1, b_charge, x1)
+        probability_vec[i] = v_vec[i] * v_vec[i]
+    end
+
+    x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(@view probability_vec[1:length(x1_domain)]))
+    x1_val = x1_domain[x1_ind]
+    mem_buf[1, sample_iter] = x1_val
+    v = v_vec[x1_ind]
+    prob = probability_vec[x1_ind]
+    site_charge, _ = core1.Indices[2].InvXindex[x1_val]
+    left_charge = b_charge .- site_charge
+
+    for j in 2:length(mps.Cores)
+        core = mps.Cores[j]
+        xj_domain = core.Indices[2].FlatDomain
+        inv_sqrt_prob = 1 / sqrt(prob)
+        for (i, xj) in enumerate(xj_domain)
+            temp_v = inv_sqrt_prob * v * getval(mps_mem, core, left_charge, xj)
+            v_vec[i] = temp_v
+            probability_vec[i] = temp_v * temp_v
+        end
+        xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(@view probability_vec[1:length(xj_domain)]))
+        xj_val = xj_domain[xj_ind]
+        mem_buf[j, sample_iter] = xj_val
+        v = v_vec[xj_ind]
+        prob = probability_vec[xj_ind]
+        site_charge, _ = core.Indices[2].InvXindex[xj_val]
+        left_charge .-= site_charge
+    end
+    return nothing
+end
+
 """
-    sample_nondeg_parallel!(mps::U1MPS{S,Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+    sample_nondeg_parallel!(rng, mps, mem_buf, num_samples)
 
 Sample feasible points from a non-degenerate U1-symmetric MPS in parallel.
-
-# Arguments
-- `mps::U1MPS{S,Y}`: MPS object.
-- `mem_buf::Matrix{S}`: Buffer matrix to store sampled states.
-- `num_samples::Int`: Number of samples to generate.
-
-# Returns
-- `Nothing`.
-
-# Notes
-Uses thread-local RNGs and parallel sampling. Currently assumes binary domains.
+Every output column receives a seed drawn in column order before threading, so
+the result is independent of thread scheduling and of the number of threads.
 """
-function sample_nondeg_parallel!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
-
-    #TODO: seems, it will not work for non-binary case;
-    rngs = [Random.TaskLocalRNG() for _ in 1:Threads.nthreads()]
-    # mps_copies = [deepcopy(mps) for _ in 1:Threads.nthreads()]
-    max_domain_size = maximum([length(c.Indices[2].FlatDomain) for c in mps.Cores])
-    N_constr = length(first(mps.Cores[1].Indices[1].Charges))
-    v_vec_mem = [zeros(Y, max_domain_size) for _ in 1:Threads.nthreads()]
-    prob_vec_mem = [zeros(Y, max_domain_size) for _ in 1:Threads.nthreads()]
-    mps_mem_copies = [Vector{S}(undef, N_constr) for _ in 1:Threads.nthreads()]
+function sample_nondeg_parallel!(rng::AbstractRNG, mps::U1MPS{S, Y},
+                                 mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+    num_samples <= size(mem_buf, 2) || throw(ArgumentError("mem_buf has too few columns"))
+    sample_seeds = rand(rng, UInt64, num_samples)
+    max_domain_size = maximum(length(c.Indices[2].FlatDomain) for c in mps.Cores)
+    num_constraints = length(first(mps.Cores[1].Indices[1].Charges))
+    num_thread_ids = Threads.maxthreadid()
+    v_vec_mem = [zeros(Y, max_domain_size) for _ in 1:num_thread_ids]
+    prob_vec_mem = [zeros(Y, max_domain_size) for _ in 1:num_thread_ids]
+    mps_mem_copies = [Vector{S}(undef, num_constraints) for _ in 1:num_thread_ids]
 
     Threads.@threads for sample_iter in 1:num_samples
-        
         tid = Threads.threadid()
-        rng = rngs[tid - 1]
-        # local mps = mps_copies[tid - 1]
-        mps_mem = mps_mem_copies[tid - 1]
-
-        core1 = mps.Cores[1]
-        b_charge = first(core1.Indices[1].Charges)
-        x1_domain = core1.Indices[2].FlatDomain
-        v_vec = v_vec_mem[tid - 1]
-        probability_vec = prob_vec_mem[tid - 1]
-        
-        for (i, x1) in enumerate(x1_domain)
-            v_vec[i] = getval(mps_mem, core1, b_charge, x1)
-            probability_vec[i] = v_vec[i] * v_vec[i]
-        end
-
-        x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(probability_vec))
-    
-        # Input to the cycle:
-        x1_val = x1_domain[x1_ind]
-        mem_buf[1, sample_iter] = x1_val
-        v = v_vec[x1_ind]
-        prob = probability_vec[x1_ind]
-    
-        #TODO: simplify logic
-        site_charge, _ = core1.Indices[2].InvXindex[x1_val]
-        left_charge = b_charge .- site_charge
-    
-        for j in 2:length(mps.Cores)
-            core = mps.Cores[j]
-            xj_domain = core.Indices[2].FlatDomain
-            inv_sqrt_prob = 1 / sqrt(prob)
-            for (i, xj) in enumerate(xj_domain)
-                temp_v = inv_sqrt_prob * v * getval(mps_mem, core, left_charge, xj)
-                v_vec[i] = temp_v
-                probability_vec[i] = temp_v * temp_v
-            end
-            xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(probability_vec))
-    
-            # Input to the cycle:
-            xj_val = xj_domain[xj_ind]
-            mem_buf[j, sample_iter] = xj_val
-            v = v_vec[xj_ind]
-            prob = probability_vec[xj_ind]
-        
-            #TODO: simplify logic
-            site_charge, _ = core.Indices[2].InvXindex[xj_val]
-            left_charge .-= site_charge
-    
-        end
+        sample_rng = Random.Xoshiro(sample_seeds[sample_iter])
+        _sample_nondeg_column!(sample_rng, mps, mem_buf, sample_iter,
+                              v_vec_mem[tid], prob_vec_mem[tid], mps_mem_copies[tid])
     end
     return nothing
 end
 
-"""
-    sample_nondeg!(mps::U1MPS{S,Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
-
-Sample feasible points from a non-degenerate U1-symmetric MPS. This function does not use parallelization (and copying of mps), 
-so, it may be easily used for parallelization by optimization problems.
-
-# Arguments
-- `mps::U1MPS{S,Y}`: MPS object.
-- `mem_buf::Matrix{S}`: Buffer matrix to store sampled states.
-- `num_samples::Int`: Number of samples to generate.
-
-# Returns
-- `Nothing`.
+sample_nondeg_parallel!(mps::U1MPS, mem_buf::Matrix, num_samples::Int) =
+    sample_nondeg_parallel!(Random.default_rng(), mps, mem_buf, num_samples)
 
 """
-function sample_nondeg!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+    sample_nondeg!(rng, mps, mem_buf, num_samples)
 
-    #TODO: seems, it will not work for non-binary case;
-    rng = Random.TaskLocalRNG()
-    max_domain_size = maximum([length(c.Indices[2].FlatDomain) for c in mps.Cores])
+Serial counterpart of `sample_nondeg_parallel!`. It intentionally uses the
+same per-column seed scheme, so serial and parallel calls are identical for the
+same initial RNG state.
+"""
+function sample_nondeg!(rng::AbstractRNG, mps::U1MPS{S, Y},
+                        mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+    num_samples <= size(mem_buf, 2) || throw(ArgumentError("mem_buf has too few columns"))
+    sample_seeds = rand(rng, UInt64, num_samples)
+    max_domain_size = maximum(length(c.Indices[2].FlatDomain) for c in mps.Cores)
+    num_constraints = length(first(mps.Cores[1].Indices[1].Charges))
     v_vec = zeros(Y, max_domain_size)
     probability_vec = zeros(Y, max_domain_size)
+    mps_mem = Vector{S}(undef, num_constraints)
 
-    # No parallelization:
     for sample_iter in 1:num_samples
-
-        core1 = mps.Cores[1]
-        b_charge = first(core1.Indices[1].Charges)
-        x1_domain = core1.Indices[2].FlatDomain
-        
-        for (i, x1) in enumerate(x1_domain)
-            v_vec[i] = getval(core1, b_charge, x1)
-            probability_vec[i] = v_vec[i] * v_vec[i]
-        end
-
-        x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(probability_vec))
-    
-        # Input to the cycle:
-        x1_val = x1_domain[x1_ind]
-        mem_buf[1, sample_iter] = x1_val
-        v = v_vec[x1_ind]
-        prob = probability_vec[x1_ind]
-    
-        #TODO: simplify logic
-        site_charge, _ = core1.Indices[2].InvXindex[x1_val]
-        left_charge = b_charge .- site_charge
-    
-        for j in 2:length(mps.Cores)
-            core = mps.Cores[j]
-            xj_domain = core.Indices[2].FlatDomain
-            inv_sqrt_prob = 1 / sqrt(prob)
-            for (i, xj) in enumerate(xj_domain)
-                temp_v = inv_sqrt_prob * v * getval(core, left_charge, xj)
-                v_vec[i] = temp_v
-                probability_vec[i] = temp_v * temp_v
-            end
-            xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(probability_vec))
-    
-            # Input to the cycle:
-            xj_val = xj_domain[xj_ind]
-            mem_buf[j, sample_iter] = xj_val
-            v = v_vec[xj_ind]
-            prob = probability_vec[xj_ind]
-        
-            #TODO: simplify logic
-            site_charge, _ = core.Indices[2].InvXindex[xj_val]
-            left_charge .-= site_charge
-    
-        end
+        sample_rng = Random.Xoshiro(sample_seeds[sample_iter])
+        _sample_nondeg_column!(sample_rng, mps, mem_buf, sample_iter,
+                              v_vec, probability_vec, mps_mem)
     end
     return nothing
 end
+
+sample_nondeg!(mps::U1MPS, mem_buf::Matrix, num_samples::Int) =
+    sample_nondeg!(Random.default_rng(), mps, mem_buf, num_samples)

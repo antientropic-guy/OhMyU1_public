@@ -25,6 +25,12 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 ThreadsX = "ac1d9e8a-700a-412c-b207-f0111f4b6c0d"
 
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
+
 [compat]
 GLPK = "1.2.1"
 HypothesisTests = "0.11.6"
