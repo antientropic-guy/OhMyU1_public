@@ -483,14 +483,63 @@ function u1_lq(m::U1Matrix{S, Y}) where {S<: Integer, Y<:AbstractFloat}
     blocks_L = Dict{Vector{S}, Array{Y}}()
 
     for charge in keys(m.Blocks)
-        L_c, Q_c = lq(m.Blocks[charge])
-        blocks_Q[charge] = Q_c
-        blocks_L[charge] = L_c
+        block = m.Blocks[charge]
+        if size(block, 1) == 1
+            # For a one-dimensional left bond, LQ is just normalization of a
+            # row vector: a = ||a||₂ (a / ||a||₂). Avoid a LAPACK call for
+            # every tiny charge sector.
+            scale = norm(block)
+            if iszero(scale)
+                L_c, Q_c = lq(block)
+                blocks_Q[charge] = Matrix(Q_c)
+                blocks_L[charge] = Matrix(L_c)
+            else
+                blocks_L[charge] = reshape(Y[scale], 1, 1)
+                blocks_Q[charge] = block ./ scale
+            end
+        else
+            L_c, Q_c = lq(block)
+            blocks_Q[charge] = Matrix(Q_c)
+            blocks_L[charge] = Matrix(L_c)
+        end
     end
 
     return blocks_L, blocks_Q
 end
 
+
+function _has_nondegenerate_bonds(mps::U1MPS)
+    return all(block -> size(block, 1) == 1 && size(block, 3) == 1,
+               Iterators.flatten(values(core.Blocks) for core in mps.Cores))
+end
+
+"""Right-to-left orthogonalization specialized for bond degeneracy one."""
+function _orthogonalize_nondeg!(mps::U1MPS{S, Y}) where {S<:Integer, Y<:AbstractFloat}
+    for n in reverse(2:length(mps.Cores))
+        core = mps.Cores[n]
+        squared_norms = Dict{Vector{S},Y}()
+        for (charges, block) in core.Blocks
+            left_charge = charges[1]
+            squared_norms[left_charge] = get(squared_norms, left_charge, zero(Y)) + sum(abs2, block)
+        end
+
+        norms = Dict{Vector{S},Y}()
+        for (charge, squared_norm) in squared_norms
+            norm_value = sqrt(squared_norm)
+            iszero(norm_value) && throw(DomainError(norm_value, "zero non-degenerate MPS sector"))
+            norms[charge] = norm_value
+        end
+
+        for (charges, block) in core.Blocks
+            block ./= norms[charges[1]]
+        end
+        for (charges, block) in mps.Cores[n - 1].Blocks
+            block .*= norms[charges[3]]
+        end
+    end
+    mps.ort_center = 1
+    return nothing
+end
 
 """
     orthogonalize!(mps::U1MPS{S,Y}) where {S<:Integer, Y<:AbstractFloat}
@@ -509,6 +558,8 @@ Moves orthogonality center to site 1 using successive LQ decompositions.
 function orthogonalize!(mps::U1MPS{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     if mps.ort_center == 1
         return nothing
+    elseif _has_nondegenerate_bonds(mps)
+        return _orthogonalize_nondeg!(mps)
     else
         num_sites = length(mps.Cores)
         for n in reverse(2:num_sites)
@@ -735,43 +786,85 @@ function getval(core::U1Core{S, Y}, i::S, right_charge::Vector{S}) where {S<:Int
     end
 end
 
+function _build_nondeg_sampling_tables(mps::U1MPS{S,Y}) where {S<:Integer,Y<:AbstractFloat}
+    tables = Vector{Dict{Vector{S},Vector{Y}}}(undef, length(mps.Cores))
+    fallbacks = Vector{Vector{Y}}(undef, length(mps.Cores))
+    lookup_buffer = Vector{S}(undef, length(mps.Flux))
+    for (core_index, core) in enumerate(mps.Cores)
+        domain = core.Indices[2].FlatDomain
+        table = Dict{Vector{S},Vector{Y}}()
+        for charges in keys(core.Blocks)
+            left_charge = charges[1]
+            haskey(table, left_charge) && continue
+            values = Vector{Y}(undef, length(domain))
+            for (domain_index, x) in enumerate(domain)
+                values[domain_index] = getval(lookup_buffer, core, left_charge, x)
+            end
+            table[left_charge] = values
+        end
+        tables[core_index] = table
+        fallbacks[core_index] = zeros(Y, length(domain))
+    end
+    return tables, fallbacks
+end
+
+@inline function _weighted_index(rng::AbstractRNG, weights::Vector{Y}, count::Int) where {Y<:AbstractFloat}
+    total = zero(Y)
+    @inbounds for index in 1:count
+        total += weights[index]
+    end
+    total > zero(Y) || throw(ArgumentError("sampling weights must have positive sum"))
+    threshold = rand(rng, Y) * total
+    cumulative = zero(Y)
+    @inbounds for index in 1:count
+        cumulative += weights[index]
+        threshold < cumulative && return index
+    end
+    return count
+end
+
 function _sample_nondeg_column!(rng::AbstractRNG, mps::U1MPS{S, Y},
+                                sampling_tables::Vector{Dict{Vector{S},Vector{Y}}},
+                                fallbacks::Vector{Vector{Y}},
                                 mem_buf::Matrix{S}, sample_iter::Int,
-                                v_vec::Vector{Y}, probability_vec::Vector{Y},
-                                mps_mem::Vector{S}) where {S<:Integer, Y<:AbstractFloat}
+                                probability_vec::Vector{Y},
+                                charge::Vector{S}) where {S<:Integer, Y<:AbstractFloat}
     core1 = mps.Cores[1]
     b_charge = first(core1.Indices[1].Charges)
     x1_domain = core1.Indices[2].FlatDomain
+    copyto!(charge, b_charge)
+    values = get(sampling_tables[1], charge, fallbacks[1])
 
     for (i, x1) in enumerate(x1_domain)
-        v_vec[i] = getval(mps_mem, core1, b_charge, x1)
-        probability_vec[i] = v_vec[i] * v_vec[i]
+        probability_vec[i] = values[i] * values[i]
     end
 
-    x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(@view probability_vec[1:length(x1_domain)]))
+    x1_ind = _weighted_index(rng, probability_vec, length(x1_domain))
     x1_val = x1_domain[x1_ind]
     mem_buf[1, sample_iter] = x1_val
-    v = v_vec[x1_ind]
+    v = values[x1_ind]
     prob = probability_vec[x1_ind]
-    site_charge, _ = core1.Indices[2].InvXindex[x1_val]
-    left_charge = b_charge .- site_charge
+    @inbounds for constraint in eachindex(charge)
+        charge[constraint] -= core1.Indices[2].A_vec[constraint] * x1_val
+    end
 
     for j in 2:length(mps.Cores)
         core = mps.Cores[j]
         xj_domain = core.Indices[2].FlatDomain
+        values = get(sampling_tables[j], charge, fallbacks[j])
         inv_sqrt_prob = 1 / sqrt(prob)
         for (i, xj) in enumerate(xj_domain)
-            temp_v = inv_sqrt_prob * v * getval(mps_mem, core, left_charge, xj)
-            v_vec[i] = temp_v
+            temp_v = inv_sqrt_prob * v * values[i]
             probability_vec[i] = temp_v * temp_v
         end
-        xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(@view probability_vec[1:length(xj_domain)]))
+        xj_ind = _weighted_index(rng, probability_vec, length(xj_domain))
         xj_val = xj_domain[xj_ind]
         mem_buf[j, sample_iter] = xj_val
-        v = v_vec[xj_ind]
+        v = inv_sqrt_prob * v * values[xj_ind]
         prob = probability_vec[xj_ind]
-        site_charge, _ = core.Indices[2].InvXindex[xj_val]
-        left_charge .-= site_charge
+        @inbounds for constraint in eachindex(charge)
+            charge[constraint] -= core.Indices[2].A_vec[constraint] * xj_val
+        end
     end
     return nothing
 end
@@ -792,9 +885,9 @@ function sample_nondeg_parallel!(rng::AbstractRNG, mps::U1MPS{S, Y},
     max_domain_size = maximum(length(c.Indices[2].FlatDomain) for c in mps.Cores)
     num_constraints = length(first(mps.Cores[1].Indices[1].Charges))
     num_thread_ids = Threads.maxthreadid()
-    v_vec_mem = [zeros(Y, max_domain_size) for _ in 1:num_thread_ids]
     prob_vec_mem = [zeros(Y, max_domain_size) for _ in 1:num_thread_ids]
-    mps_mem_copies = [Vector{S}(undef, num_constraints) for _ in 1:num_thread_ids]
+    charge_mem = [Vector{S}(undef, num_constraints) for _ in 1:num_thread_ids]
+    sampling_tables, fallbacks = _build_nondeg_sampling_tables(mps)
 
     Threads.@threads for block in 1:num_blocks
         tid = Threads.threadid()
@@ -802,8 +895,8 @@ function sample_nondeg_parallel!(rng::AbstractRNG, mps::U1MPS{S, Y},
         first_sample = (block - 1) * _RNG_BLOCK_SIZE + 1
         last_sample = min(block * _RNG_BLOCK_SIZE, num_samples)
         for sample_iter in first_sample:last_sample
-            _sample_nondeg_column!(block_rng, mps, mem_buf, sample_iter,
-                                  v_vec_mem[tid], prob_vec_mem[tid], mps_mem_copies[tid])
+            _sample_nondeg_column!(block_rng, mps, sampling_tables, fallbacks,
+                                  mem_buf, sample_iter, prob_vec_mem[tid], charge_mem[tid])
         end
     end
     return nothing
@@ -826,17 +919,17 @@ function sample_nondeg!(rng::AbstractRNG, mps::U1MPS{S, Y},
     block_seeds = rand(rng, UInt64, num_blocks)
     max_domain_size = maximum(length(c.Indices[2].FlatDomain) for c in mps.Cores)
     num_constraints = length(first(mps.Cores[1].Indices[1].Charges))
-    v_vec = zeros(Y, max_domain_size)
     probability_vec = zeros(Y, max_domain_size)
-    mps_mem = Vector{S}(undef, num_constraints)
+    charge = Vector{S}(undef, num_constraints)
+    sampling_tables, fallbacks = _build_nondeg_sampling_tables(mps)
 
     for block in 1:num_blocks
         block_rng = Random.Xoshiro(block_seeds[block])
         first_sample = (block - 1) * _RNG_BLOCK_SIZE + 1
         last_sample = min(block * _RNG_BLOCK_SIZE, num_samples)
         for sample_iter in first_sample:last_sample
-            _sample_nondeg_column!(block_rng, mps, mem_buf, sample_iter,
-                                  v_vec, probability_vec, mps_mem)
+            _sample_nondeg_column!(block_rng, mps, sampling_tables, fallbacks,
+                                  mem_buf, sample_iter, probability_vec, charge)
         end
     end
     return nothing

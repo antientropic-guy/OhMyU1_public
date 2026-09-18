@@ -41,6 +41,7 @@ end
     OhMyU1.sample_nondeg!(Random.Xoshiro(20), mps, serial, 200)
     OhMyU1.sample_nondeg_parallel!(Random.Xoshiro(20), mps, parallel, 200)
     @test serial == parallel
+    @test A * serial == repeat(b, 1, size(serial, 2))
 end
 
 @testset "solve is repeatable" begin
@@ -68,4 +69,62 @@ end
         @test isequal(getfield(run1, field), getfield(run2, field))
         @test isequal(getfield(run1, field), getfield(serial, field))
     end
+end
+
+@testset "tiny dominant SVD agrees with LAPACK" begin
+    rng = Random.Xoshiro(24)
+    for (m, n) in ((1, 1), (1, 3), (3, 1), (2, 2), (3, 4))
+        block = randn(rng, m, n)
+        u, sigma, v = OhMyU1._dominant_singular_triplet(block)
+        reference = svd(block; full=false)
+        @test sigma ≈ reference.S[1] rtol=1e-12 atol=1e-12
+        @test sigma .* (u * v') ≈
+              reference.S[1] .* (reference.U[:, 1] * reference.V[:, 1]') rtol=1e-11 atol=1e-11
+    end
+
+    for block in (zeros(1, 3), zeros(3, 1), zeros(2, 2))
+        u, sigma, v = OhMyU1._dominant_singular_triplet(block)
+        @test sigma == 0
+        @test sigma .* (u * v') == block
+    end
+end
+
+@testset "non-degenerate orthogonalization preserves amplitudes" begin
+    n = 4
+    A = OhMyU1.assignment_matrix(n)
+    b = ones(Int, 2n)
+    training = zeros(Int, n^2, 48)
+    OhMyU1.fill_assignment_vectors!(Random.Xoshiro(25), training, n)
+    problem = OhMyU1.OptimizationProblem(A=A, b=b, cost_function=sum)
+    mps = OhMyU1.build_mps_from_feasible_samples(problem, training, 1, false)
+    amplitudes_before = [mps[column] for column in eachcol(training)]
+    OhMyU1.orthogonalize!(mps)
+    amplitudes_after = [mps[column] for column in eachcol(training)]
+    @test amplitudes_after ≈ amplitudes_before rtol=1e-12 atol=1e-12
+
+    matrix = OhMyU1.collect_right(mps.Cores[2])
+    blocks_l, blocks_q = OhMyU1.u1_lq(matrix)
+    for charge in keys(matrix.Blocks)
+        @test blocks_l[charge] * blocks_q[charge] ≈ matrix.Blocks[charge]
+    end
+end
+
+@testset "sparse graph distance agrees with dense implementation" begin
+    n = 4
+    A = OhMyU1.assignment_matrix(n)
+    b = ones(Int, 2n)
+    training = zeros(Int, n^2, 48)
+    OhMyU1.fill_assignment_vectors!(Random.Xoshiro(26), training, n)
+    problem = OhMyU1.OptimizationProblem(A=A, b=b, cost_function=sum)
+    mps = OhMyU1.build_mps_from_feasible_samples(problem, training, 1, false)
+    memorized = [Set{Vector{Int}}(mps.LinkIndices[i + 1].Charges)
+                 for i in 1:size(A, 2)]
+    update_rows, update_values = OhMyU1._constraint_column_updates(A)
+    initial_charge = first(mps.LinkIndices[1].Charges)
+    sparse_distances = OhMyU1._graph_distances_parallel(
+        training, initial_charge, memorized, update_rows, update_values)
+    dense_buffer = similar(initial_charge)
+    dense_distances = [OhMyU1.graph_dist_global!(dense_buffer, column, mps, memorized)
+                       for column in eachcol(training)]
+    @test sparse_distances == dense_distances
 end
