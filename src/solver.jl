@@ -362,7 +362,7 @@ Sorts samples in T according to the cost function and keeps only num_to_keep bes
 function sort_and_truncate(T::Matrix{Int}, cost_function::Function, num_to_keep::Int)
     n_cols = size(T, 2)
     costs = [cost_function(view(T, :, i)) for i in 1:n_cols]
-    perm = sortperm(costs; alg=Base.Sort.MergeSort)[1:num_to_keep]
+    perm = partialsortperm(costs, 1:num_to_keep)
     return T[:, perm], costs[perm]
 end 
 

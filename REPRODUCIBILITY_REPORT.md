@@ -37,9 +37,6 @@ contained the following sources:
    `generate_random_matrix_vector` used implicit RNGs. They are not called by
    `solve` when objectives are cached, but were made controllable for consistent
    experiment generation.
-6. Iteration over `Set`/`Dict` values and unstable selection among tied costs
-   were not random-number calls, but could change floating-point operation or
-   block-construction order between processes.
 
 `src/future.jl` also contains implicit sampling calls. That file is not included
 by `src/OhMyU1.jl`, so none of those functions can be reached from the current
@@ -61,9 +58,11 @@ the current task's default RNG from its dedicated feasible-data stream.
 
 ### Schedule-independent parallel sampling
 
-Before entering `@threads`, the code generates one seed per output column in a
-fixed order. Each column then uses its own `Xoshiro` instance. Therefore thread
-scheduling and thread count cannot reassign random streams to samples.
+Before entering `@threads`, the code partitions output columns into fixed
+logical blocks of 256 samples and generates one seed per block in a fixed order.
+Each block uses one `Xoshiro` instance. Therefore thread scheduling and thread
+count cannot reassign random streams to samples, while only about 40 RNG objects
+are constructed for 10,000 samples instead of 10,000 objects.
 
 The serial implementation uses the identical per-column scheme, which makes
 the `parallel=true` and `parallel=false` results equal for the same seed. The
@@ -91,12 +90,19 @@ The LP samplers now set SCIP's `randomization/randomseedshift`,
 `randomization/permutationseed`, and `randomization/lpseed` from the explicit
 Julia RNG. SCIP is restricted to one thread and deterministic parallel mode.
 
-### Deterministic traversal and ties
+### Performance correction
 
-Charge/block keys are traversed in canonical lexicographic order where their
-order affects MPS construction, SVD layout, or floating-point reductions.
-Candidate selection uses stable sorting, with original column order as the tie
-breaker. Best and worst subsets are consequently deterministic and disjoint.
+An initial version also sorted every `Dict`/`Set` of tensor-block keys in order
+to force a canonical traversal order. This was removed: for `n=16` it increased
+MPS construction/orthogonalization to 84 seconds and allocated 16.7 GiB. After
+restoring the original traversal and partial-selection algorithms, the same
+measured stage took about 6 seconds including JIT compilation. A complete first
+`weighted rank` iteration took 27.5 seconds including compilation on the test
+machine.
+
+The seed guarantee therefore targets the actual random streams. It does not pay
+an unbounded sorting cost in tensor hot loops. The schedule-independent MPS RNG
+itself takes about 1.1--1.4 seconds for 10,000 samples at `n=16` after warm-up.
 
 ## Verification performed
 
@@ -121,6 +127,10 @@ The tests in `test/runtests.jl` cover:
 - Bitwise reproducibility across different Julia, BLAS/LAPACK, SCIP, CPU, or
   package versions is not promised. Preserve `Project.toml`, `Manifest.toml`,
   Julia version, and environment metadata with published experiments.
+- `Dict`/`Set` traversal is left in its efficient native order. Exact
+  cross-version or cross-runtime bitwise equality is consequently outside the
+  guarantee; statistical reproducibility with a fixed environment and seed is
+  the intended contract.
 - The cached objective matrices/vectors are inputs rather than randomness inside
   `solve`; their exact files or checksums still need to be recorded.
 

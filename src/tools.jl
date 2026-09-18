@@ -174,6 +174,8 @@ end
 
 # Random tools:
 
+const _RNG_BLOCK_SIZE = 256
+
 function random_bilinear_form(rng::AbstractRNG, N::Int, density::Float64, r::Number)
     Q = sprand(rng, N, N, density)
     Q.nzval .= rand(rng, length(Q.nzval)) .* (2r) .- r
@@ -199,15 +201,20 @@ random_assignment_vector(n::Int) = random_assignment_vector(Random.default_rng()
 
 function fill_assignment_vectors_parallel!(rng::AbstractRNG, X::AbstractMatrix{Int}, n::Int)
     M = size(X, 2)
-    sample_seeds = rand(rng, UInt64, M)
-    Threads.@threads for k in 1:M
-        column_rng = Random.Xoshiro(sample_seeds[k])
-        p = randperm(column_rng, n)
-        fill!(@view(X[:, k]), 0)
-        for i in 1:n
-            j = p[i]
-            idx = (i - 1) * n + j
-            X[idx, k] = 1
+    num_blocks = cld(M, _RNG_BLOCK_SIZE)
+    block_seeds = rand(rng, UInt64, num_blocks)
+    Threads.@threads for block in 1:num_blocks
+        block_rng = Random.Xoshiro(block_seeds[block])
+        first_column = (block - 1) * _RNG_BLOCK_SIZE + 1
+        last_column = min(block * _RNG_BLOCK_SIZE, M)
+        for k in first_column:last_column
+            p = randperm(block_rng, n)
+            fill!(@view(X[:, k]), 0)
+            for i in 1:n
+                j = p[i]
+                idx = (i - 1) * n + j
+                X[idx, k] = 1
+            end
         end
     end
 end
@@ -236,7 +243,7 @@ Takes a matrix of (column) samples and a vector of pre-computed costs for these 
 """
 function pick_best_samples(samples::AbstractMatrix{Int}, k::Int, costs_vector::AbstractVector; rev=false)
     new_k = min(size(samples, 2), k)
-    idx = sortperm(costs_vector; rev=rev, alg=Base.Sort.MergeSort)[1:new_k]
+    idx = partialsortperm(costs_vector, 1:new_k, rev=rev)
     return copy(view(samples, :, idx))
 end
 
@@ -244,10 +251,9 @@ function pick_mixed_samples(samples::AbstractMatrix{Int}, k_best::Int, k_worst::
     n = length(costs_vector)
     k_best = min(n, k_best)
     k_worst = min(n - k_best, k_worst)
-    ordered = sortperm(costs_vector; rev=rev, alg=Base.Sort.MergeSort)
-    idx_best = ordered[1:k_best]
+    idx_best = partialsortperm(costs_vector, 1:k_best, rev=rev)
     if k_worst > 0
-        idx_worst = reverse(ordered)[1:k_worst]
+        idx_worst = partialsortperm(costs_vector, 1:k_worst, rev=!rev)
         idx = vcat(idx_best, idx_worst)
     else
         idx = idx_best
