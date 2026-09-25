@@ -23,3 +23,11 @@ examples/SetPartitioning.ipynb
 # sh outputs:
 *.err
 *.out
+
+# other repo:
+ConstrainTNet.jl/
+
+# Metadata:
+SymmetricTensorNetwork.pdf
+examples/assignment_benchmark_report.tex
+main_v1.tex
