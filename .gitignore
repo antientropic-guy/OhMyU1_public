@@ -19,9 +19,7 @@ examples/SetPartitioning.ipynb
 
 # sh scripts:
 *.sh
-!scripts/bash/
 scripts/bash/*
-!scripts/bash/run_EELS_optimization.sh
 
 # Small validation outputs, separate from the actual EELS experiment results.
 /data/eels_optimization/smoke/
