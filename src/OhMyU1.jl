@@ -37,6 +37,7 @@ using SparseArrays
 
 # include("py_tools.jl")
 include("tools.jl")
+include("set_partitioning.jl")
 include("mps_core.jl")
 include("diversification.jl")
 include("train.jl")

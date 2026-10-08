@@ -1,0 +1,121 @@
+% BEGIN PROTES BENCHMARK ADDITION
+\paragraph{Two PROTES access models.}
+We additionally compare with PROTES \cite{batsheva2023protes}, separating
+access to an exact feasible-set indicator from initialization using only
+feasible observations. These experiments concern binary $n\times n$
+assignment, with $N=n^2$ variables in row-major order. They are distinct from
+the preceding trained-kernel comparison with ConstrainTNet.
+All runs use float64 and one logical CPU on the same local machine;
+\cref{app:protes_protocol} specifies the construction, timing, training,
+software versions, and recorded sample and iteration counts.
+
+\paragraph{Exact full indicator: storage and sampling.}
+When all feasible charge states are known, both representations describe
+the complete set of $n!$ assignments. Their minimal total bond dimensions
+coincide; the advantage of the symmetric representation is its block sparsity,
+not a smaller total exact TT rank. In \cref{fig:protes_exact}, dense storage
+grows substantially faster than storage of the permitted scalar blocks.
+Actual Julia object sizes include substantial metadata: at $n=16$, the full
+$U(1)$ object occupies $1.59$ GiB, compared with $18.0$ MiB of numerical blocks.
+The corresponding dense variable-rank cores would require approximately
+$472$ GiB; this last number is a storage calculation, not an allocation.
+
+For sampling we construct the complete indicator in both libraries and
+use the same uniform distribution over assignments, with no training.
+All observed samples are feasible. At $n=8$ and $n=10$, OhMyU1 generates
+approximately $2.1\cdot10^4$ and $7.8\cdot10^3$ samples per second,
+respectively, versus $2.3\cdot10^3$ and $1.1\cdot10^2$ for the more
+memory-efficient \texttt{protes\_general}. The resulting speedups are
+approximately $9\times$ and $71\times$; small instances do not exhibit
+universal superiority. These measurements compare particular dense and
+block-sparse implementations, rather than establishing a lower bound on
+all possible PROTES implementations.
+
+\begin{figure*}[t]
+\centering
+\begin{subfigure}[t]{0.48\textwidth}
+\centering\includegraphics[width=\linewidth]{pictures/benchmark_protes_memory_julia.pdf}
+\caption{Storage of the full assignment indicator.}
+\end{subfigure}\hfill
+\begin{subfigure}[t]{0.48\textwidth}
+\centering\includegraphics[width=\linewidth]{pictures/benchmark_protes_sampling_julia.pdf}
+\caption{Sampling from the full uniform feasible distribution.}
+\end{subfigure}
+\caption{Exact-indicator benchmarks, with no training or finite-data initialization.
+(a) The two PROTES curves count float64 coefficients in dense TT cores with
+uniform or minimal variable ranks; the scalar-block $U(1)$ curve counts only
+allowed coefficients. Markers measure the complete Julia object, including
+charges and dictionaries, through $n=16$. These are storage sizes, not peak
+training memory. (b) Median sampling throughput over three seeds; shading
+shows the observed minimum--maximum range. Each trial accumulates at least
+one second of timed generation in batches of 100. Counts include repeated
+draws. Construction, canonicalization, compilation, and diagnostic bookkeeping
+are excluded. Complete dense models are actually constructed only for
+$4\le n\le10$; complete $U(1)$ models are constructed through $n=16$.
+The distributions and binary variable order are identical.}
+\label{fig:protes_exact}
+\end{figure*}
+
+\paragraph{Initialization from feasible observations.}
+We next provide the same 400 feasible observations and objective instance
+to PROTES and $U(1)$-EELS, without providing an indicator or permutation
+encoding to PROTES. OhMyU1 retains access to $A,b$, an intentional difference
+in structural information. EELS uses $\gamma=1$, sector degeneracy one,
+one training sweep at learning rate $0.05$, and up to 10000 generated points
+per outer iteration. All methods run until a common time budget, including
+initial fitting; the number of iterations is not fixed.
+Five prespecified PROTES configurations vary rank, learning rate, batch size,
+Adam steps, and initial-data passes (\cref{tab:protes_settings}).
+
+\Cref{fig:protes_data_short,fig:protes_data_long} count distinct feasible
+points absent from the initial dataset, rather than repeated draws.
+Longer initial fitting improves PROTES: at $n=8$, \texttt{fit20} finds
+12--25 new points for linear objectives and 17--25 for quadratic objectives
+in 50 seconds, while EELS finds 5157--6697 and 5240--7043, respectively.
+Thus, inability to generate any feasible point is not a robust conclusion;
+the observed limitation is rare feasible generation under this data-based
+initialization and update rule. New points need not improve the objective.
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{pictures/benchmark_protes_u1_5s_julia.pdf}
+\caption{New distinct feasible assignments within a 5-second budget, for
+linear (left) and quadratic (right) objectives, versus assignment size $n$.
+Each point is one matched diagnostic instance/seed; all methods receive the
+same 400 initial observations. PROTES settings are in
+\cref{tab:protes_settings}; $U(1)$-EELS uses the fixed settings above.
+Initialization, fitting, sampling, and scoring count toward the budget.
+At $n=4$ the initial data already cover all 24 solutions, so zero novelty is
+unavoidable. Both panels share the ordinate transformation $\log_{10}(1+z)$,
+with ticks labelled by the original count $z$, allowing zeros to be shown.
+No uncertainty estimate can be obtained from this single-seed screen.}
+\label{fig:protes_data_short}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering\includegraphics[width=\textwidth]{pictures/benchmark_protes_u1_50s_julia.pdf}
+\caption{The same data-initialized comparison at $n=8$ ($N=64$), with a
+50-second budget and three matched instance/seed pairs for each objective.
+Dots are individual counts of new distinct feasible points; orange bars
+and red diamonds show the arithmetic mean and median of the original counts.
+Both panels use the same $\log_{10}(1+z)$ ordinate and limits. All five PROTES
+configurations are reported, not only the best observed configuration.
+These are trained, time-limited runs, unlike the untrained full-indicator
+sampling experiment in \cref{fig:protes_exact}.}
+\label{fig:protes_data_long}
+\end{figure*}
+
+\paragraph{Scope of the comparison.}
+The fraction $n!/2^{n^2}$ of feasible binary strings decreases rapidly,
+making sparsity a plausible explanation for the difficulty of learning
+feasibility from observations; this experiment does not isolate that cause
+from the initialization and learning rule. It does not refute constrained
+PROTES supplied with an exact indicator, or demonstrate an advantage under
+identical access to constraint information. The findings are specific to
+this assignment encoding, parameter grid, budgets, and local implementations.
+They do not extend automatically to a small number of constraints, simple
+constraints with low-rank indicators, different encodings or orderings,
+sparse adaptations of PROTES, or other hardware. Nor do these diagnostic
+instances constitute a new held-out SOTA evaluation or a comparison of
+final optimization quality.
+\clearpage
+% END PROTES BENCHMARK ADDITION

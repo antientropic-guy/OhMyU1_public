@@ -1,0 +1,203 @@
+% BEGIN PROTES BENCHMARK APPENDIX
+\clearpage
+\section{PROTES comparison: exact indicators and data-based initialization}
+\label{app:protes_protocol}
+
+\subsection{Exact assignment indicator, ranks, and storage}
+Let $x_{ij}\in\{0,1\}$ satisfy unit row and column sums. We order the $N=n^2$
+bits row by row. After $k=rn+s$ bits, $0\le s<n$, a state records the set
+$S$ of occupied columns and $h=|S|-r\in\{0,1\}$, indicating whether the
+partially processed row already contains its unit entry. A state is retained
+only if it is reachable from the empty prefix and admits a feasible suffix.
+For $h=0$, at least one unoccupied column must remain among columns
+$s+1,\ldots,n$; for $h=1$, at least one occupied column must lie among
+columns $1,\ldots,s$. A transition assigns the next bit, preserves the
+one-per-row rule and column uniqueness, and updates $S$. The endpoints are
+$S=\varnothing$ and $S=\{1,\ldots,n\}$. Assigning value one to each allowed
+transition gives one unit-amplitude path per permutation, hence the complete
+indicator without enumerating all $n!$ solutions.
+
+With out-of-range binomial coefficients interpreted as zero, the number of
+states at an internal cut is
+\begin{equation}
+ R_k=\binom nr-\binom{s}{r-n+s}
+       +\binom n{r+1}-\binom{n-s}{r+1},\qquad R_0=R_N=1.
+\end{equation}
+The first pair of terms counts $h=0$ states and the second counts $h=1$
+states. After grouping prefixes and suffixes by residual constraint charge,
+the indicator unfolding consists of disjoint nonempty all-ones blocks,
+each of rank one. Consequently $R_k$ is the exact minimal ordinary TT rank
+for this ordering. The maximum is $\Theta(2^n/\sqrt n)$ (e.g., 125 at $n=8$,
+461 at $n=10$, and 24309 at $n=16$). The $U(1)$ representation has the same
+total link dimension, but every sector has degeneracy one. This exact-rank
+statement concerns the full indicator; an optimizer's distribution concentrated
+on a smaller feasible subset need not have these ranks.
+
+The two dense float64 storage counts in \cref{fig:protes_exact} are
+\begin{equation}
+ B_{\rm uniform}=8[2(N-2)R_{\max}^2+4R_{\max}],\qquad
+ B_{\rm variable}=16\sum_{k=1}^{N}R_{k-1}R_k.
+\end{equation}
+They describe the fast PROTES core layout and the variable-rank
+\texttt{protes\_general} layout, respectively. For $U(1)$, the number of
+allowed scalar transitions at position $(r,s)$ is
+\begin{equation}
+ E_{r,s}=\binom{n-1}{r}+\binom nr-\binom{s+1}{r-n+s+1}
+                 +\binom n{r+1}-\binom{n-s}{r+1}.
+\end{equation}
+The first term counts transitions assigning one and the remaining terms
+count transitions assigning zero. Thus numerical block storage is
+$8\sum_{r=0}^{n-1}\sum_{s=0}^{n-1}E_{r,s}$ bytes. These counts were checked
+against the constructed blocks and dense arrays. MiB and GiB denote $2^{20}$
+and $2^{30}$ bytes. Full $U(1)$ objects were constructed and measured through
+$n=16$ using \texttt{Base.summarysize}, including dictionaries, charge vectors,
+the constraint matrix, and other reachable fields. The measurement excludes
+process/runtime memory and temporary buffers; it depends on object sharing
+in this constructor. Dense curves count coefficient arrays only. Adam states,
+gradients, and training workspaces are excluded from all storage claims.
+
+Both upstream PROTES interfaces in the checked revision use dense arrays;
+passing JAX \texttt{BCOO} cores fails at an unsupported summation, whereas
+dense cores, including variable ranks, pass the same sampling/training check.
+This establishes the absence of a working drop-in sparse path in this
+revision, not the impossibility of implementing sparse PROTES. ``Dense''
+refers to TT cores, not an explicitly stored tensor of $2^N$ entries.
+
+\subsection{Untrained full-indicator sampling protocol}
+Both models sample uniformly over the same full feasible set. PROTES uses
+the above zero/one transition cores, padded to a common internal rank for
+its fast implementation and left at their exact ranks for
+\texttt{protes\_general}. For OhMyU1, backward dynamic programming computes
+the number $C_k(q)$ of feasible continuations from each residual charge.
+The scalar on an allowed edge $q\to q'$ is replaced by
+$\sqrt{C_{k+1}(q')/C_k(q)}$. Products telescope to $1/\sqrt{n!}$, giving an
+exact right-canonical normalized amplitude. Its squared amplitudes and the
+PROTES probability indicator therefore induce the same uniform law.
+The number of complete paths and normalization are checked explicitly.
+
+We call the unchanged OhMyU1 serial \texttt{sample\_nondeg!} and the upstream
+PROTES sampling kernels with their usual JAX vectorization. There is no
+objective function, training dataset, learning rate, or optimization iteration
+in this experiment. Batches contain 100 samples. Each of three seeds runs
+until cumulative timed generator calls reach at least one second; a final
+batch can exceed that duration. Throughput divides the actual generated
+count by actual timed duration, and counts repetitions. Construction,
+canonicalization, JIT warm-up, feasibility checks, and unique-point bookkeeping
+are excluded. PROTES timing includes materializing the output and recomputing
+right environments per batch, as in its normal sampling loop.
+The feasible fraction is 100.0\% in all recorded batches. Raw per-trial
+batch counts, times, warm-up/construction times, and distinct-point counts
+are retained in the accompanying results snapshot. Full dense models are
+allocated for $n=4,\ldots,10$; beyond this grid their storage curves are
+analytical, not timing measurements. OhMyU1 is measured for $n=4,\ldots,16$.
+
+The large $U(1)$ object traversal initially caused memory pressure at
+$n=15,16$ on the local machine. Final sampling measurements were repeated
+without repeating that deep traversal and with garbage collection before
+warm-up; the initial memory-audit runs are retained separately. The shaded
+ranges report run-to-run variation, not confidence intervals or an
+asymptotic complexity result.
+
+\subsection{Paired, data-initialized optimization protocol}
+These diagnostic instances are separate from the article's held-out objective
+files. For each $(n,j,o)$, with repetition index $j$ and objective family $o$,
+NumPy's generator uses seed $20261008+1000n+10j+\mathbf{1}_{o=\mathrm{quadratic}}$.
+It first draws 400 independent random permutations and converts them to
+row-major binary assignments. It then draws either independent
+$c_i\sim U[-50,50]$, with cost $c^Tx$, or a matrix with independent
+$B_{ij}\sim U[-7,7]$, sets $Q=(B+B^T)/2$, and uses cost $x^TQx$.
+Exactly the same arrays are exported to Julia; SHA-256 hashes and initial
+best costs are checked across languages. Identical integer seeds alone
+would not ensure identical arrays across their random-number generators.
+
+Define novelty as the number of distinct generated feasible points outside
+the set of initial observations. Initial duplicates are not new, repeated
+generated points count once, and the initial best cost is retained in every
+method. The 5-second screen uses $n=4,\ldots,10$ and $j=0$; the 50-second
+comparison uses $n=8$ and $j=0,1,2$, for both objective families. All five
+PROTES configurations in \cref{tab:protes_settings} are included at both
+budgets. At $n=4$ the particular initial datasets cover all 24 solutions.
+
+\begin{table}[t]
+\centering\small
+\caption{PROTES settings. $k$ is the input/generated batch size, $k_{\rm top}$
+the elite count, $g$ the number of Adam steps per accepted batch, and $e$
+the number of passes through the initial 400 observations. The last column
+is the number of initial Adam updates, $(400/k)eg$.}
+\label{tab:protes_settings}
+\begin{tabular}{lrrrrrrr}\toprule
+Configuration & Rank & $k$ & $k_{\rm top}$ & $g$ & Learning rate & $e$ & Initial updates\\\midrule
+default &5&100&10&1&0.05&1&4\\
+rank20 &20&100&10&1&0.05&1&4\\
+slow10 &5&100&10&10&0.01&1&40\\
+batch400 &10&400&40&10&0.01&1&10\\
+fit20 &5&100&10&1&0.05&20&80\\\bottomrule
+\end{tabular}
+\end{table}
+
+PROTES starts from its ordinary random dense cores, receives the initial
+observations through its external-sample interface in deterministically
+shuffled passes, and applies its normal elite update. Thus only the best
+10.0\% of each input batch contributes to the likelihood update, not all
+400 observations simultaneously. This explicit initialization adapter is
+not claimed to be a published PROTES fitting procedure. After initialization
+no more external observations are injected. The external evaluator assigns
+valid points score $(2/\pi)\arctan C(x)$ and invalid points score 2, preserving
+the ordering of feasible costs. An entirely infeasible batch uses the
+upstream skip-update path. If fewer than $k_{\rm top}$ points are feasible,
+the unchanged elite rule also includes penalized infeasible points. These
+choices can affect learning and are part of the scope of the conclusion.
+No mask, repair, indicator, $A,b$, or permutation encoding is given to PROTES.
+
+OhMyU1 receives $A,b$, deduplicates and cost-sorts the same initial data,
+and rebuilds its MPS from the retained data at each outer iteration, applying
+EELS with $\gamma=1$ and sector degeneracy one before canonicalization.
+Training uses one right--left sweep, learning rate 0.05, and normalized
+weights proportional to $\exp[-(C(x)-C_{\min})/T]$, with $T$ the sample
+standard deviation of the current costs; weights are uniform if $T=0$.
+The normalized trained MPS supplies up to 10000 samples, processed in batches
+of 100 for deadline checks. The next dataset contains up to 400 lowest-cost
+distinct points from the union of retained and newly generated points.
+No external feasible generator is called after initialization. These are
+the article's EELS updates with the fixed 20-iteration cap replaced by a
+wall-time limit; realized iteration counts are reported below.
+
+Initial model construction/fitting, subsequent training, sampling, novelty
+bookkeeping, and objective evaluation all count toward the 5/50-second
+budgets. Explicit warm-up and file loading do not: PROTES warms its kernels
+on a synthetic binary objective at the same dimension, while OhMyU1 warms
+one full outer iteration and discards its model. Residual compilation counts
+toward the measured budget. Deadlines are cooperative: a current sample or
+training operation can overrun, and a batch arriving after the deadline is
+not accepted. All initial fits completed. There is no fixed number of
+PROTES optimization iterations; generated counts and batch sizes determine
+the sampling workload, whereas only batches containing feasible points
+trigger further Adam steps. Total post-initialization Adam-update counts
+were not separately logged. The result tables give generated counts and
+actual times rather than implying equal iteration counts.
+
+All experiments ran locally on an Intel Core i5-10210U (four physical cores,
+eight logical processors, approximately 8 GB RAM), Windows 11, with each
+process pinned to logical CPU 0 and BLAS restricted to one thread. OhMyU1
+uses Julia 1.12.5 with one thread; PROTES uses Python 3.12.14, NumPy 1.26.4,
+JAX 0.4.38 (CPU/x64), and Optax 0.2.4. The upstream revision is
+\texttt{06d447845dd26ffccbc8e95c7545fa1d2617940e}; its kernels were not edited.
+Frequency scaling and operating-system activity were not controlled.
+The historical PROTES runs and subsequent OhMyU1 runs were not interleaved,
+so wall-time comparisons retain possible temporal system-load effects.
+The scripts, compact results, hashes, and Julia plotting code accompany
+the notebook \texttt{examples/PROTES\_assignment\_scaling.ipynb}.
+
+% GENERATED BENCHMARK TABLES
+
+These small diagnostic grids establish neither a statistically stable failure
+threshold nor an optimized comparison of final costs. In particular, the
+50-second \texttt{fit20} setting generates new feasible points for every seed,
+despite the zero counts of the default setting. Feasible-set sparsity
+$n!/2^{n^2}$ is suggestive but does not describe a learned distribution's
+mass on feasible points. More extensive training, alternative initialization,
+different penalty/update rules, or supplying a low-rank exact indicator can
+change the result. Few or simple constraints may produce small TT ranks and
+very different trade-offs. All claims here are restricted to the measured
+assignment setting, with no universal superiority claim.
+% END PROTES BENCHMARK APPENDIX

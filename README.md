@@ -86,6 +86,65 @@ This folder contains scripts used for experiments in the article. You may easily
 - The repository includes experimental notebooks and prepared datasets for benchmarking and analysis.
 Due to the refactoring of the folder structure, you may encounter some issues with paths to raw data or cached results. In such cases, check the paths (all relevant data is located in the `data` folder), or contact sergeyyoudin@gmail.com
 
+## EELS objective-value experiment
+
+Submit the fixed `gamma=1` comparison on the cluster with:
+
+```bash
+bash scripts/bash/run_EELS_optimization.sh
+```
+
+The launcher submits a Slurm job using the existing `c32m384` partition,
+32 CPUs and a 24-hour limit. It locates the project automatically and uses
+its pinned Julia environment (Julia 1.12). Julia must be available in `PATH`,
+as in the other cluster scripts. No edits or weight grid are needed.
+
+`scripts/run_EELS_optimization.jl` compares `best_cost` (Method (ii)) and
+`EELS` on the existing linear and quadratic assignment **test** instances
+only: `n=12:16`, instance IDs `1:50`. No train/validation instances are used.
+Each pair starts from the
+same 400 feasible draws, then performs 20 iterations of one training sweep
+(learning rate 0.05) and 10,000 TT draws. Both arms retain up to 400 best
+unique candidates from the previous training set and the new TT samples.
+There are **no additional external feasible draws after initialization and
+no ADD selection**. Consequently the baseline is rerun in this scarce-data
+protocol; existing ADD baseline results are not reused as matched controls.
+
+Results are checkpointed after each completed pair in
+`data/eels_optimization/gamma1/res_EELS_gamma1_{linear,quadratic}_test.jld2`.
+Each file contains `res_dict`, `solver_params`, `configuration`, and
+`diagnostics`. The result dictionary has the same non-parametric layout as
+`run_BestCost.jl`, with no artificial weight dimension:
+
+```julia
+using OhMyU1, JLD2
+d = load("data/eels_optimization/gamma1/res_EELS_gamma1_quadratic_test.jld2")
+baseline = d["res_dict"]["best_cost"][12][1] # SolverStatistics
+eels = d["res_dict"]["EELS"][12][1]
+eels.c_min              # final best objective value
+eels.learning_curve     # initial value followed by 20 iterations
+eels.incub              # best assignment vector
+d["diagnostics"]["EELS"][(12, 1)].evaluations # cumulative unique oracle calls
+```
+
+Seeds, input-file hashes and parameters are recorded. Each newly computed pair
+checks that the shared initial matrix was not mutated and that both arms used
+the same initial training matrix after deduplication and sorting; its SHA-256
+is stored in each arm's diagnostics as `initial_training_sha256`.
+The sampling budget is
+matched; unique objective evaluations may differ and are counted separately.
+`utility_curve` measures the mean lowest 5% (at least one) of the unique
+selection pool. Elapsed times include compilation when first encountered;
+they are diagnostics, not a warmed-up kernel benchmark.
+Relaunching skips completed pairs and rejects incompatible checkpoints.
+After a forcibly killed job, verify that it has stopped and remove the stale
+`data/eels_optimization/gamma1/.running` directory before resubmitting.
+
+For a short check on existing `n=12, i=1` instances, use
+`bash scripts/bash/run_EELS_optimization.sh --smoke`; its results go into
+the separate `data/eels_optimization/smoke/` directory. Local regression
+checks run with `julia --project=. --threads=2 scripts/test_EELS_optimization.jl`.
+
 ## Compatibility
 
 The package dependencies are specified in `Project.toml`. It is tested with Julia-compatible versions of packages such as `JuMP`, `GLPK`, `SCIP`, `Plots`, and `JLD2`.

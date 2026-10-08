@@ -20,9 +20,13 @@ examples/SetPartitioning.ipynb
 # sh scripts:
 *.sh
 scripts/bash/*
+!scripts/bash/
+!scripts/bash/run_PROTES_assignment.sh
+!scripts/bash/run_SetPartitioning.sh
 
 # Small validation outputs, separate from the actual EELS experiment results.
 /data/eels_optimization/smoke/
+/data/set_partitioning/smoke/
 
 # sh outputs:
 *.err
@@ -30,8 +34,19 @@ scripts/bash/*
 
 # other repo:
 ConstrainTNet.jl/
+/PROTES/
 
 # Metadata:
 SymmetricTensorNetwork.pdf
 examples/assignment_benchmark_report.tex
 main_v1.tex
+
+# temporary files:
+tmp/
+/data/protes_comparison/
+
+# patch:
+*.patch
+
+# text explanations:
+*.txt
