@@ -10,6 +10,7 @@
 #SBATCH --error=set_partitioning_%j.err
 set -euo pipefail
 # Full run: light tiles, entropic objective, 250 instances x 2 pairs = 1000 solves.
+# Corrected results go to test/results_v3; old test/results is never resumed.
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
     script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
     export PARTITION_PROJECT_ROOT="$(cd -- "$script_dir/../.." && pwd)"

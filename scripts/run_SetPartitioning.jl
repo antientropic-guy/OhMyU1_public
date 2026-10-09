@@ -9,6 +9,19 @@ module PartitionEELS
     include("run_EELS_optimization.jl")
 end
 
+const PARTITION_ADD_STRATEGY = "best nonzero mixed" # Article: Best Cost + GDF
+const PARTITION_ADD_WEIGHT = 0.4                    # Article: w_filter
+const PARTITION_PROTOCOL = 3                       # Isolated per-pair workers
+partition_results_dir(root) = joinpath(root,"results_v3")
+
+function partition_solver_params(mode; smoke=false)
+    mode in ("ADD","EELS") || error("Unknown mode: $mode")
+    SolverParams(NUM_FEASIBLE_SAMPLES=smoke ? 40 : mode == "EELS" ? 400 : 1000,
+        NUM_MPS_SAMPLES=smoke ? 80 : 10000,NUM_GLOBAL_ITER=smoke ? 2 : 20,
+        NUM_SWEEP_ITER=1,LINK_DEGENERACY=1,LEARNING_RATE=0.05,
+        UTILITY_FRACTION=0.05,KEEP_NUM_WORST=0.0)
+end
+
 function partition_cost(objectives, objective, m)
     objective == "entropic" || error("Unknown objective: $objective")
     c, W, tau = objectives.c,objectives.scenarios,objectives.tau
@@ -46,34 +59,79 @@ function partition_add_arm(problem,sampler,initial,sp,seed,strategy)
     Random.seed!(seed)
     start = time_ns()
     stats = solve(problem,source!,sp,strategy;diversify=false,barrier=false,
-        mixed_proportion=0.4,rank_weight=0.4,parallel=false,print_stats=false)
+        mixed_proportion=PARTITION_ADD_WEIGHT,rank_weight=PARTITION_ADD_WEIGHT,parallel=false,print_stats=false)
     elapsed_seconds = (time_ns()-start)/1e9
     all(problem.A*stats.incub .== problem.b) || error("Infeasible incumbent")
     (; stats,diagnostics=(;elapsed_seconds,initial_training_sha256=actual_initial[],
         external_sample_counts=counts,external_first32_sha256=prefix_hashes))
 end
 
-function run_partition_group(root,mode,objective,d,ns,instances,sp,workers)
-    path = joinpath(root,"results","res_$(mode)_$(objective)_$(d)_test.jld2")
+function run_partition_pair(input_data,mode,objective,d,n,i,sp,input_sha256)
+    # Function arguments/local bindings cannot be captured from the dispatcher.
+    # Each invocation owns its input, sampler, initial data, objective and stats.
+    spec = input_data["specification"]
+    (spec.n,spec.i,spec.density,spec.split) == (n,i,d,"test") || error("Wrong input assigned to worker")
+    p = input_data["instance"]
+    size(p.A) == (3n,n^2) || error("Wrong instance dimensions")
+    setup_seconds = @elapsed sampler = ExactPartitionSampler(p.tiles,length(p.b))
+    sampler.counts[UInt128(0)] == input_data["exact_cover_count"] || error("Input cover count mismatch")
+    seed = partition_seed(n,i,d)+400_000_000
+    initial = zeros(Int,n^2,sp.NUM_FEASIBLE_SAMPLES)
+    initial_seconds = @elapsed fill_partition_vectors!(MersenneTwister(seed),initial,sampler)
+    all(p.A*initial .== p.b) || error("Infeasible source data")
+    initial_hash = PartitionEELS.training_fingerprint(initial)
+    problem = OptimizationProblem(A=p.A,b=p.b,
+        cost_function=partition_cost(input_data["objectives"],objective,length(p.b)),name="partition_$(d)_$(n)_$(i)")
+    arm = mode == "EELS" ? "EELS" : PARTITION_ADD_STRATEGY
+    pair = Dict{String,Any}()
+    for strategy in (isodd(i) ? ["best_cost",arm] : [arm,"best_cost"])
+        if mode == "EELS"
+            stats,diag = PartitionEELS.run_arm(problem,initial,sp,seed;eels=strategy==arm)
+            pair[strategy] = (;stats,diagnostics=diag)
+        else
+            pair[strategy] = partition_add_arm(problem,sampler,initial,sp,seed,strategy)
+        end
+    end
+    PartitionEELS.training_fingerprint(initial) == initial_hash || error("Initial data mutated")
+    for result in values(pair)
+        all(p.A*result.stats.incub .== p.b) || error("Infeasible saved incumbent")
+        isapprox(problem.cost_function(result.stats.incub),result.stats.c_min;atol=1e-10,rtol=1e-10) ||
+            error("Saved cost does not match this instance's objective")
+    end
+    pair["best_cost"].diagnostics.initial_training_sha256 == pair[arm].diagnostics.initial_training_sha256 ||
+        error("Paired training data differ")
+    if mode == "ADD"
+        pair["best_cost"].diagnostics.external_first32_sha256 == pair[arm].diagnostics.external_first32_sha256 ||
+            error("External source streams differ")
+    end
+    diagnostics = (;seed,initial_sha256=initial_hash,input_sha256,setup_seconds,initial_seconds,
+        density=p.actual_density,exact_cover_count=input_data["exact_cover_count"],
+        dp_states=length(sampler.counts),arms=Dict(a=>v.diagnostics for (a,v) in pair))
+    (;baseline=pair["best_cost"].stats,alternative=pair[arm].stats,diagnostics)
+end
+
+function run_partition_group(root,mode,objective,d,ns,instances,sp,workers;
+        result_directory=partition_results_dir(root))
+    path = joinpath(result_directory,"res_$(mode)_$(objective)_$(d)_test.jld2")
     mkpath(dirname(path))
     hashes = Dict((n,i)=>bytes2hex(sha256(read(partition_path(root,d,n,i)))) for n in ns for i in instances)
-    configuration = (;protocol=2,split="test",mode,objective,density=d,ns=collect(ns),instances=collect(instances),
+    configuration = (;protocol=PARTITION_PROTOCOL,split="test",mode,objective,density=d,ns=collect(ns),instances=collect(instances),
         input_hashes=hashes,source_hashes=partition_source_hashes(),julia_version=string(VERSION),
         parameters=NamedTuple{fieldnames(SolverParams)}(Tuple(getfield(sp,f) for f in fieldnames(SolverParams))),
-        gamma=1,add_weight=0.4,diversify_add=false,barrier=false,
+        gamma=1,add_strategy=PARTITION_ADD_STRATEGY,add_weight=PARTITION_ADD_WEIGHT,diversify_add=false,barrier=false,
         random_column_order=true,objective_tuning=false,
         add_candidate_pool=20000,external_eels_after_initial=0)
-    arm = mode == "EELS" ? "EELS" : "best nonzero mixed"
+    arm = mode == "EELS" ? "EELS" : PARTITION_ADD_STRATEGY
     empty_branch() = Dict(n=>Dict{Int,SolverStatistics}() for n in ns)
     res_dict = Dict{String,Any}("best_cost"=>empty_branch(),
-        arm=>(mode == "EELS" ? empty_branch() : Dict(0.4=>empty_branch())))
+        arm=>(mode == "EELS" ? empty_branch() : Dict(PARTITION_ADD_WEIGHT=>empty_branch())))
     diagnostics = Dict{Tuple{Int,Int},Any}()
     if isfile(path)
-        saved = load(path)
-        saved["configuration"] == configuration || error("Checkpoint/input/code mismatch: $path")
-        res_dict,diagnostics = saved["res_dict"],saved["diagnostics"]
+        checkpoint = load(path)
+        checkpoint["configuration"] == configuration || error("Checkpoint/input/code mismatch: $path")
+        res_dict,diagnostics = checkpoint["res_dict"],checkpoint["diagnostics"]
     end
-    alternative = mode == "EELS" ? res_dict[arm] : res_dict[arm][0.4]
+    alternative = mode == "EELS" ? res_dict[arm] : res_dict[arm][PARTITION_ADD_WEIGHT]
     jobs = [(n,i) for n in ns for i in instances if !(haskey(res_dict["best_cost"][n],i) && haskey(alternative[n],i))]
     isempty(jobs) && return @info "Already complete" path
     queue = Channel{Tuple{Int,Int}}(length(jobs))
@@ -83,44 +141,31 @@ function run_partition_group(root,mode,objective,d,ns,instances,sp,workers)
     @info "Starting paired comparison" mode objective d pairs=length(jobs) workers
     @sync for _ in 1:min(workers,length(jobs))
         Threads.@spawn for (n,i) in queue
-            saved = lock(io_lock) do
-                load(partition_path(root,d,n,i))
+            # Explicitly task-local: never reuse a binding assigned in the
+            # enclosing function (checkpoint loading used to share `saved`).
+            local input_data = lock(io_lock) do
+                input_path = partition_path(root,d,n,i)
+                bytes2hex(sha256(read(input_path))) == hashes[(n,i)] || error("Input file changed")
+                load(input_path)
             end
-            p = saved["instance"]
-            setup_seconds = @elapsed sampler = ExactPartitionSampler(p.tiles,length(p.b))
-            seed = partition_seed(n,i,d)+400_000_000
-            initial = zeros(Int,n^2,sp.NUM_FEASIBLE_SAMPLES)
-            initial_seconds = @elapsed fill_partition_vectors!(MersenneTwister(seed),initial,sampler)
-            all(p.A*initial .== p.b) || error("Infeasible source data")
-            initial_hash = PartitionEELS.training_fingerprint(initial)
-            problem = OptimizationProblem(A=p.A,b=p.b,
-                cost_function=partition_cost(saved["objectives"],objective,length(p.b)),name="partition_$(d)_$(n)_$(i)")
-            pair = Dict{String,Any}()
-            # Alternate arm order to reduce systematic first-run/JIT timing bias.
-            for strategy in (isodd(i) ? ["best_cost",arm] : [arm,"best_cost"])
-                if mode == "EELS"
-                    stats,diag = PartitionEELS.run_arm(problem,initial,sp,seed;eels=strategy==arm)
-                    pair[strategy] = (;stats,diagnostics=diag)
-                else
-                    pair[strategy] = partition_add_arm(problem,sampler,initial,sp,seed,strategy)
-                end
-            end
-            PartitionEELS.training_fingerprint(initial) == initial_hash || error("Initial data mutated")
-            pair["best_cost"].diagnostics.initial_training_sha256 == pair[arm].diagnostics.initial_training_sha256 ||
-                error("Paired training data differ")
-            if mode == "ADD"
-                pair["best_cost"].diagnostics.external_first32_sha256 == pair[arm].diagnostics.external_first32_sha256 ||
-                    error("External source streams differ")
-            end
+            local completed = run_partition_pair(input_data,mode,objective,d,n,i,sp,hashes[(n,i)])
             lock(io_lock) do
-                res_dict["best_cost"][n][i] = pair["best_cost"].stats
-                alternative[n][i] = pair[arm].stats
-                diagnostics[(n,i)] = (;seed,initial_sha256=initial_hash,setup_seconds,initial_seconds,
-                    density=p.actual_density,exact_cover_count=saved["exact_cover_count"],
-                    dp_states=length(sampler.counts),arms=Dict(a=>v.diagnostics for (a,v) in pair))
+                # Reload the declared instance independently of worker bindings.
+                declared = load(partition_path(root,d,n,i))
+                declared_cost = partition_cost(declared["objectives"],objective,length(declared["instance"].b))
+                for stats in (completed.baseline,completed.alternative)
+                    all(declared["instance"].A*stats.incub .== declared["instance"].b) ||
+                        error("Independent pre-save feasibility audit failed: n=$n i=$i")
+                    isapprox(declared_cost(stats.incub),stats.c_min;atol=1e-10,rtol=1e-10) ||
+                        error("Independent pre-save objective audit failed: n=$n i=$i")
+                end
+                completed.diagnostics.exact_cover_count == declared["exact_cover_count"] || error("Wrong metadata")
+                res_dict["best_cost"][n][i] = completed.baseline
+                alternative[n][i] = completed.alternative
+                diagnostics[(n,i)] = completed.diagnostics
                 jldsave(path*".tmp";res_dict,solver_params=sp,configuration,diagnostics)
                 Base.Filesystem.rename(path*".tmp",path)
-                @info "Saved pair" mode objective d n i baseline=pair["best_cost"].stats.c_min alternative=pair[arm].stats.c_min
+                @info "Saved pair" mode objective d n i baseline=completed.baseline.c_min alternative=completed.alternative.c_min
             end
         end
     end
@@ -147,9 +192,7 @@ function partition_main(args=ARGS)
         workers = parse(Int,get(ENV,"PARTITION_WORKERS",string(Threads.nthreads())))
         1 <= workers <= Threads.nthreads() || error("PARTITION_WORKERS must be between 1 and Julia thread count")
         for mode in modes, objective in ["entropic"], d in densities
-            sp = SolverParams(NUM_FEASIBLE_SAMPLES=smoke ? 40 : mode == "EELS" ? 400 : 1000,
-                NUM_MPS_SAMPLES=smoke ? 80 : 10000,NUM_GLOBAL_ITER=smoke ? 2 : 20,
-                NUM_SWEEP_ITER=1,LINK_DEGENERACY=1,LEARNING_RATE=0.05,KEEP_NUM_WORST=0.0)
+            sp = partition_solver_params(mode;smoke)
             run_partition_group(root,mode,objective,d,ns,instances,sp,workers)
         end
     finally
