@@ -23,10 +23,35 @@ scripts/bash/*
 !scripts/bash/
 !scripts/bash/run_PROTES_assignment.sh
 !scripts/bash/run_SetPartitioning.sh
+!scripts/bash/run_PartitionLocality.sh
+/data/set_partitioning/locality_v1/smoke/
+/data/set_partitioning/locality_v1/**/*.tmp
 
 # Small validation outputs, separate from the actual EELS experiment results.
 /data/eels_optimization/smoke/
 /data/set_partitioning/smoke/
+/data/variable_order/**/*.partial
+/data/variable_order/**/*.tmp
+
+# Archived exploratory studies; keep the locality experiment versioned.
+/data/set_partitioning/pilot_settings/
+/data/variable_order/
+/examples/SetPartitioning_settings_pilot.ipynb
+/examples/VariableOrder_feasible_space.ipynb
+/examples/pictures/test_SetPartitioning_ADD_Entropic.pdf
+/examples/pictures/test_SetPartitioning_ADD_Entropic.png
+/examples/pictures/test_SetPartitioning_EELS_Entropic.pdf
+/examples/pictures/test_SetPartitioning_EELS_Entropic.png
+/examples/set_partitioning_analysis/
+/examples/set_partitioning_pilot/
+/examples/variable_order/
+/scripts/bash/run_VariableOrderStudy.sh
+/scripts/build_variable_order_notebook.py
+/scripts/pilot_SetPartitioning.jl
+/scripts/report_SetPartitioning_pilot.jl
+/scripts/report_variable_order.jl
+/scripts/study_variable_order.jl
+/scripts/variable_order_exact.py
 
 # sh outputs:
 *.err
@@ -50,3 +75,6 @@ tmp/
 
 # text explanations:
 *.txt
+
+# instructions for agents:
+AGENTS.md

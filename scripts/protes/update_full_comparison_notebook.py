@@ -6,27 +6,27 @@ path=root/'examples/PROTES_assignment_scaling.ipynb'
 book=nb.read(path,as_version=4)
 book.cells=[c for c in book.cells if not c.metadata.get('full_comparison_extension')]
 for c in book.cells:
-    if c.cell_type=='markdown' and 'реальный размер U(1)-объекта' in c.source:
+    if c.cell_type=='markdown' and 'actual U(1) object size' in c.source:
         c.source=c.source.replace(r'n\le12',r'n\le16')
 def md(s):
     c=nb.v4.new_markdown_cell(s);c.metadata['full_comparison_extension']=True;book.cells.append(c)
 def code(s):
     c=nb.v4.new_code_cell(s);c.metadata['full_comparison_extension']=True;book.cells.append(c)
-md(r'''## 9. Действительно построенные полные модели и скорость генерации
+md(r'''## 9. Constructed full models and sampling speed
 
-**Уточнение предыдущего эксперимента:** прежние большие числа памяти PROTES были аналитическими оценками плотных ядер, а не фактическими выделениями памяти. U(1)-объекты тогда строились до $n=12$. Теперь полные U(1)-MPS построены до $n=16$, а обе плотные реализации PROTES — на $n=4,\ldots,10$. Большие PROTES-модели на этом ноутбуке не создавались: при $n=16$ даже профиль переменных рангов требует сотен GiB. Эти точки не заменяются выдуманными измерениями скорости.
+**Clarification of the earlier experiment:** the previous large PROTES memory figures were analytical estimates of dense cores, not actual allocations. U(1) objects had been constructed up to $n=12$. Full U(1)-MPS have now been built up to $n=16$, and both dense PROTES implementations for $n=4,\ldots,10$. Larger PROTES models were not allocated on this laptop: at $n=16$, even variable-rank storage requires hundreds of GiB. Missing points are not replaced with invented speed measurements.
 
-Обе модели описывают **всё** множество перестановок, в одинаковом построчном бинарном порядке. Динамическое программирование сохраняет множество уже занятых столбцов на каждом разрезе. Допустимым переходам соответствуют единицы, остальным — нули. Проверены точные ранги и число путей $n!$.
+Both models represent **all** permutations in the same row-major binary order. Dynamic programming retains the set of occupied columns at each cut. Allowed transitions receive ones and other transitions zeros. Exact ranks and the path count $n!$ are verified.
 
-В U(1) обратный проход считает число продолжений $C_k(q)$. Скалярный блок заменяется на $\sqrt{C_{k+1}(q')/C_k(q)}$. Произведение вдоль любого пути равно $1/\sqrt{n!}$; это точная правоканоническая форма равномерного распределения. Используется неизменённый `sample_nondeg!` из проекта. Подготовка такой формы не включена во время генерации и записана отдельно.
+For U(1), a backward pass counts completions $C_k(q)$. Each scalar block is replaced by $\sqrt{C_{k+1}(q')/C_k(q)}$. The product along any path is $1/\sqrt{n!}$, giving the exact right-canonical form of the uniform distribution. The project's unmodified `sample_nondeg!` is used. Preparing this form is excluded from sampling time and recorded separately.
 
-В PROTES реально выделены плотные ядра индикатора: с дополнением до общего ранга для быстрого `protes` и с минимальными переменными рангами для `protes_general`. Используются их неизменённые `_sample`, `_interface_matrices` и JAX-векторизация. Это равномерное распределение на тех же $n!$ точках. Обучение выключено: проверяется именно сэмплирование из точно заданной модели.
+PROTES indicator cores are actually allocated as dense arrays: padded to a common rank for fast `protes`, and using minimum variable ranks for `protes_general`. Their unmodified `_sample`, `_interface_matrices`, and JAX vectorization are used. This is the uniform distribution on the same $n!$ points. Training is disabled: the benchmark measures sampling from an exactly specified model.
 
-**Протокол скорости:** один и тот же логический CPU 0; float64; батчи по 100; три seed; для каждого seed не менее 1 секунды суммарного времени вызовов генератора. Построение, JIT-прогрев, проверка допустимости и подсчёт уникальных точек исключены из этого времени у обоих методов. У PROTES учитываются получение результата на CPU и пересчёт правых окружений для каждого батча, как в штатном цикле. Сохраняется фактическое число батчей и длительность; крупный батч может превысить 1 секунду. Поэтому основной показатель — сэмплы/секунду, а количество уникальных точек сопровождается фактической длительностью.
+**Timing protocol:** the same logical CPU 0; float64; batches of 100; three seeds; at least one second of cumulative generator-call time per seed. Construction, JIT warm-up, feasibility checks, and unique-point counting are excluded for both methods. PROTES timing includes transferring results to the CPU and recomputing right environments for each batch, as in its standard loop. Actual batch counts and durations are saved; a large batch can exceed one second. The primary metric is therefore samples/second, and unique-point counts are accompanied by actual durations.
 
-«Новые» точки здесь отсутствуют в одной и той же контрольной выборке из 400 точек (`linear`, seed №0); она не используется для построения полного индикатора. При $n=4$ эта выборка уже содержит всё пространство, поэтому новых точек быть не может. При $n=5$ число ещё не виденных решений тоже мало. **Скорость всех сэмплов и скорость новых уникальных точек — разные показатели.**
+"New" points are absent from the same reference dataset of 400 points (`linear`, seed index 0), which is not used to construct the full indicator. At $n=4$, that dataset already covers the entire space, so no new points can exist. At $n=5$, few unseen solutions remain. **Total sampling throughput and new-unique-point throughput are different metrics.**
 
-Размер объектов измерен отдельным полным обходом `Base.summarysize`. Первичные прогоны на $n=15,16$ показали давление на память и подкачку на машине с 8 GB RAM. Поэтому скоростные прогоны повторены без глубокого обхода памяти, с `GC.gc()` перед прогревом; первичные результаты сохранены в снимке как `full_u1_initial_memory_audit`. На графике показаны повторные измерения и их диапазон. Это локальные показатели данной реализации и машины, не независимые от оборудования оценки сложности.
+Object sizes are measured in a separate full `Base.summarysize` traversal. Initial runs at $n=15,16$ showed memory pressure and paging on the 8 GB RAM machine. Speed runs were therefore repeated without the deep memory traversal, with `GC.gc()` before warm-up; initial results are preserved in the snapshot as `full_u1_initial_memory_audit`. The figure shows repeat measurements and their range. These are local measurements of this implementation and machine, not hardware-independent complexity estimates.
 ''')
 code('''full_snapshot=json.loads((ROOT/'examples/protes_full_comparison_results.json').read_text())
 u1_full=full_snapshot['full_u1']
@@ -63,13 +63,13 @@ table(['n','U1 / PROTES fast throughput','U1 / PROTES general throughput'],
       [[n,*[f'{np.median([float(r["samples_per_second"]) for r in full_trials if int(r["n"])==n and r["method"]=="U1"])/np.median([float(r["samples_per_second"]) for r in full_trials if int(r["n"])==n and r["method"]==method]):.2f}'
              for method in ['PROTES fast','PROTES general']]] for n in range(4,11)])
 ''')
-md(r'''## 10. U(1)-EELS и PROTES при одинаковых исходных данных и времени
+md(r'''## 10. U(1)-EELS and PROTES with identical initial data and time budgets
 
-Теперь U(1)-EELS строится **только по тем же 400 наблюдениям**, а не по полному множеству. Наблюдения и целевые функции экспортированы из NumPy без повторной генерации Julia RNG; SHA-256 исходных байтов проверяется в обоих языках. Остаётся принципиальное различие доступа к структуре: U(1) использует $A,b$, PROTES получает только данные и внешний оценщик. Поэтому это сравнение рассматриваемых постановок, а не изоляция эффекта одной архитектуры при одинаковой информации.
+U(1)-EELS is now constructed **only from the same 400 observations**, not the full feasible set. Observations and objective functions are exported from NumPy without regeneration by the Julia RNG; SHA-256 fingerprints of the original bytes are verified in both languages. A fundamental difference in structural access remains: U(1) uses $A,b$, while PROTES receives only data and an external evaluator. Thus this compares the specified settings, rather than isolating architecture effects under identical information.
 
-Параметры EELS: $\gamma=1$, вырожденность сектора 1, один двусторонний обучающий проход, шаг 0.05, до 400 лучших точек на следующей итерации, 10000 генераций на итерацию. Внешние допустимые точки после инициализации не добавляются. Обучение использует те же Boltzmann-веса и обновления, что `run_EELS_optimization.jl`. Чтобы сравнивать **время**, число внешних итераций ограничено дедлайном, а не прежней константой 20; фактическое число итераций записано. Для проверки дедлайна генерация разделена на батчи по 100. Батч, завершившийся после дедлайна, не принимается, как у PROTES. Построение, обучение, вычисление цели и учёт новых точек входят в бюджет. Дедлайн кооперативный: текущая операция построения/обучения может его превысить; фактические времена приведены ниже.
+EELS parameters: $\gamma=1$, sector degeneracy 1, one bidirectional training sweep, learning rate 0.05, up to 400 best points retained for the next iteration, and 10000 draws per iteration. No external feasible points are added after initialization. Training uses the same Boltzmann weights and updates as `run_EELS_optimization.jl`. To compare **time**, the number of outer iterations is limited by a deadline rather than the previous fixed value of 20; actual iteration counts are recorded. Sampling is divided into batches of 100 for deadline checks. A batch completed after the deadline is rejected, as in PROTES. Construction, training, objective evaluation, and novelty accounting are included in the budget. The deadline is cooperative: an ongoing construction/training operation can exceed it; actual durations are reported below.
 
-Перед измерением прогревается одна полная итерация на том же размере; модель и данные прогрева не переносятся в измеряемый прогон. Все запуски последовательные, один логический CPU, без одновременного запуска конкурирующих бенчмарков. Обзор: $n=4,\ldots,10$, один seed, 5 с. Длинные прогоны: $n=8$, три seed, 50 с, обе цели. Это те же диагностические экземпляры, а не новые файлы held-out test из статьи.
+One complete iteration at the same size is used for warm-up before measurement; neither the warm-up model nor its data is carried into the measured run. All runs are sequential, on one logical CPU, without competing benchmarks running concurrently. The scan uses $n=4,\ldots,10$, one seed, and 5 seconds. Long runs use $n=8$, three seeds, 50 seconds, and both objectives. These are the same diagnostic instances, not new held-out test files from the article.
 ''')
 code('''u1_data=full_snapshot['data_u1']
 for r in u1_data:
@@ -111,11 +111,11 @@ table(['n','Objective','Seed index','Budget','Actual seconds','Generated','New u
       [[r['n'],r['objective'],r['repetition'],r['budget'],f'{float(r["elapsed_seconds"]):.3f}',r['generated'],r['novel_unique'],
         f'{r["iterations"]}/{r["completed_iterations"]}',r['initial_training_complete'],f'{float(r["initial_c_min"]):.3f}',f'{float(r["c_min"]):.3f}'] for r in u1_data])
 ''')
-md('''## 11. Границы интерпретации
+md('''## 11. Limits of interpretation
 
-Сравнение полных моделей проверяет эффективность хранения и конкретных штатных сэмплеров при одинаковом равномерном распределении. Оно не измеряет качество обученной модели или время достижения хорошей целевой функции. Более компактное хранение само по себе не гарантирует более быстрый сэмплер: словари, выделение памяти, JIT и векторизация влияют на результат.
+The full-model comparison measures storage efficiency and the specific native samplers under the same uniform distribution. It does not measure learned-model quality or time to reach a good objective value. Compact storage alone does not guarantee faster sampling: dictionaries, memory allocation, JIT, and vectorization affect performance.
 
-Сравнение по выборке отдельно проверяет число новых допустимых точек за общий вычислительный бюджет. U(1)-EELS использует ограничения в представлении, а PROTES в этом протоколе их не получает. На малых пространствах число новых точек ограничено оставшимися решениями, на больших — новизна не означает хорошую стоимость. Поэтому сохранены также лучшие значения целевой функции и фактические времена.
+The sample-based comparison separately measures new feasible points under a shared computational budget. U(1)-EELS uses constraints in its representation, while PROTES does not receive them in this protocol. In small spaces, novelty is limited by the remaining unseen solutions; in large spaces, novelty does not imply good cost. Best objective values and actual durations are therefore also retained.
 ''')
 nb.write(book,path)
 print('Updated full-model and matched-data comparison sections.')
