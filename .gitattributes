@@ -1,0 +1,2 @@
+# Cluster entry points must retain Unix line endings on every platform.
+scripts/bash/*.sh text eol=lf

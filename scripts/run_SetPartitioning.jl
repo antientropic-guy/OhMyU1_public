@@ -23,6 +23,7 @@ function partition_solver_params(mode; smoke=false)
 end
 
 function partition_cost(objectives, objective, m)
+    objective == "linear" && return x -> dot(objectives.c,x)/sqrt(m)
     objective == "entropic" || error("Unknown objective: $objective")
     c, W, tau = objectives.c,objectives.scenarios,objectives.tau
     scale = sqrt(m)

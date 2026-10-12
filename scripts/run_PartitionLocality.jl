@@ -1,7 +1,7 @@
 #!/usr/bin/env julia
 # Separate sequential experiment; no production solver or old results modified.
 include("run_SetPartitioning.jl")
-include("generate_PartitionLocality.jl")
+include("generate_PartitionLocalityGrid.jl")
 BLAS.set_num_threads(1)
 
 function locality_add_arm(problem,sampler,initial,sp,seed,strategy;external=5000)
@@ -88,36 +88,39 @@ function locality_code_hashes()
     Dict(f=>bytes2hex(sha256(read(joinpath(PARTITION_ROOT,f)))) for f in unique(files))
 end
 
-function run_locality(span;smoke=false,instances=1:40)
+function run_locality(span;objective,smoke=false,grid=false,elements=18,n=15,instances=grid ? (1:15) : (1:40))
+    objective in ("linear","entropic") || error("Choose linear or entropic")
+    grid || @assert elements==18 && n==15
     span in LOCALITY_SPANS || error("Unknown span")
     Threads.nthreads()==1 || error("Run with --threads=1; parallelism is across isolated Slurm jobs")
     sp=SolverParams(NUM_FEASIBLE_SAMPLES=smoke ? 40 : 500,NUM_MPS_SAMPLES=smoke ? 100 : 5000,
         NUM_GLOBAL_ITER=smoke ? 2 : 15,NUM_SWEEP_ITER=1,LINK_DEGENERACY=1,
         LEARNING_RATE=.05,UTILITY_FRACTION=.05,KEEP_NUM_WORST=0.)
     external=smoke ? 100 : 5000
-    root=joinpath(LOCALITY_ROOT,smoke ? "smoke" : "results")
-    mkpath(root);lockdir=joinpath(root,".running_span$span")
+    root=joinpath(grid ? LOCALITY_GRID_ROOT : LOCALITY_ROOT,smoke ? "smoke_gradient_v2" : "results_gradient_v2",objective)
+    suffix=grid ? "span$(span)_m$(elements)_n$(n)" : "span$(span)"
+    mkpath(root);lockdir=joinpath(root,".running_$suffix")
     mkdir(lockdir) # atomic refusal of a second writer, including direct Julia runs
     try
         hashes=locality_code_hashes()
         for i in instances
-            input=locality_path(span,i);d=load(input);p=d["instance"]
+            input=grid ? grid_path(span,elements,n,i) : locality_path(span,i);d=load(input);p=d["instance"]
             @assert (d["specification"].span,d["specification"].i)==(span,i)
             sampler=ExactPartitionSampler(p.tiles,length(p.b))
             @assert sampler.counts[UInt128(0)]==d["structural"].total
             initial=Int.(d["initial"][:,1:sp.NUM_FEASIBLE_SAMPLES]);@assert all(p.A*initial .== p.b)
             rawhash=PartitionEELS.training_fingerprint(initial)
-            problem=OptimizationProblem(A=p.A,b=p.b,cost_function=partition_cost(d["objectives"],"entropic",length(p.b)),name="locality")
+            problem=OptimizationProblem(A=p.A,b=p.b,cost_function=partition_cost(d["objectives"],objective,length(p.b)),name="locality")
             seed=d["specification"].seed+100_000_000
             for mode in ("EELS","ADD")
-                path=joinpath(root,"res_$(mode)_entropic_span$(span).jld2")
+                path=joinpath(root,"res_$(mode)_$(objective)_$(suffix).jld2")
                 arm=mode=="EELS" ? "EELS" : PARTITION_ADD_STRATEGY
-                config=(;protocol=1,span,mode,external=mode=="EELS" ? 0 : external,
+                config=(;protocol=2,span,elements,n,objective,grid,mode,external=mode=="EELS" ? 0 : external,
                     parameters=NamedTuple{fieldnames(SolverParams)}(Tuple(getfield(sp,f) for f in fieldnames(SolverParams))),
                     code_hashes=hashes,gamma=1,filter_weight=.4,julia_version=string(VERSION),
                     incumbent="best of all evaluated candidates including final external batch")
-                res_dict=Dict{String,Any}("best_cost"=>Dict(15=>Dict{Int,SolverStatistics}()),
-                    arm=>(mode=="EELS" ? Dict(15=>Dict{Int,SolverStatistics}()) : Dict(.4=>Dict(15=>Dict{Int,SolverStatistics}()))))
+                res_dict=Dict{String,Any}("best_cost"=>Dict(n=>Dict{Int,SolverStatistics}()),
+                    arm=>(mode=="EELS" ? Dict(n=>Dict{Int,SolverStatistics}()) : Dict(.4=>Dict(n=>Dict{Int,SolverStatistics}()))))
                 diagnostics=Dict{Int,Any}()
                 if isfile(path)
                     saved=load(path);saved["configuration"]==config || error("Checkpoint/code mismatch")
@@ -149,9 +152,9 @@ function run_locality(span;smoke=false,instances=1:40)
                     @assert length(v.stats.learning_curve)==sp.NUM_GLOBAL_ITER+1
                     @assert all(diff(v.stats.learning_curve).<=1e-12)
                 end
-                res_dict["best_cost"][15][i]=pair["best_cost"].stats
+                res_dict["best_cost"][n][i]=pair["best_cost"].stats
                 branch=mode=="EELS" ? res_dict[arm] : res_dict[arm][.4]
-                branch[15][i]=pair[arm].stats
+                branch[n][i]=pair[arm].stats
                 diagnostics[i]=(;input_sha256=input_sha,initial_sha256=rawhash,seed,
                     structural=d["structural"],cpu=Sys.CPU_NAME,threads=Threads.nthreads(),
                     blas_threads=BLAS.get_num_threads(),arms=Dict(k=>v.diagnostics for (k,v) in pair))
@@ -164,13 +167,30 @@ function run_locality(span;smoke=false,instances=1:40)
         rm(lockdir)
     end
 end
-if abspath(PROGRAM_FILE)==@__FILE__
-    if ARGS==["--smoke"]
-        run_locality(5;smoke=true,instances=1:1)
-        run_locality(18;smoke=true,instances=1:1)
-    elseif length(ARGS)==2 && ARGS[1]=="--span"
-        run_locality(parse(Int,ARGS[2]))
-    else
-        error("Usage: --smoke | --span 5 (or 6,8,10,12,15,18)")
+function locality_main()
+    count(x->x in ("--linear","--entropic"),ARGS)==1 || error("Exactly one of --linear or --entropic is required")
+    objective="--linear" in ARGS ? "linear" : "entropic"
+    options=Dict{String,Int}();flags=Set{String}();j=1
+    while j<=length(ARGS)
+        a=ARGS[j]
+        if a in ("--span","--elements","--n")
+            j+=1;options[a]=parse(Int,ARGS[j])
+        elseif a in ("--linear","--entropic","--grid","--smoke")
+            push!(flags,a)
+        else
+            error("Unknown argument: $a")
+        end
+        j+=1
     end
+    grid="--grid" in flags;smoke="--smoke" in flags
+    m=get(options,"--elements",18);n=get(options,"--n",15)
+    grid && !(m in 18:20 && n in 13:15) && error("Grid requires m=18:20 and n=13:15")
+    spans=haskey(options,"--span") ? [options["--span"]] : smoke ? [5,18] : error("--span is required")
+    for span in spans
+        run_locality(span;objective,smoke,grid,elements=m,n,instances=smoke ? (1:1) : grid ? (1:15) : (1:40))
+    end
+end
+
+if abspath(PROGRAM_FILE)==@__FILE__
+    locality_main()
 end

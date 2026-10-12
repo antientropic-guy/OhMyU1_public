@@ -183,7 +183,7 @@ After forcibly terminating a job, remove its lock only after verifying that the 
 
 Copy the project with the new scripts and `locality_v1/instances` to the server, then run from the project root:
 ```bash
-bash scripts/bash/run_PartitionLocality.sh
+bash scripts/bash/run_PartitionLocality.sh --entropic
 ```
 The script invokes `sbatch` automatically; without Slurm, it runs all families sequentially on the local machine.
 Julia and the project dependencies must already be installed, as for previous runs.

@@ -24,6 +24,18 @@ function check_small_locality()
     end
     visit(UInt128(0),zeros(Int,length(tiles)))
     @assert computed.total==length(covers)==s.counts[UInt128(0)]
+    # Verify every cover probability exactly, with rational arithmetic.
+    for x in covers
+        mask=UInt128(0);prob=big(1)//big(1)
+        while mask!=s.full
+            u=trailing_zeros(s.full & ~mask)+1
+            candidates=[j for j in s.by_cell[u] if mask&s.masks[j]==0 && x[j]==1]
+            @assert length(candidates)==1
+            next=mask|s.masks[only(candidates)]
+            prob*=s.counts[next]//s.counts[mask];mask=next
+        end
+        @assert prob==1//computed.total
+    end
     for k in 1:length(tiles)-1
         left=unique(Tuple(x[1:k]) for x in covers)
         right=unique(Tuple(x[k+1:end]) for x in covers)
@@ -50,6 +62,8 @@ function audit_locality_inputs()
         @assert allunique(Tuple.(p.tiles)) && length(d["structural"].ranks)==226
         s=ExactPartitionSampler(p.tiles,18)
         @assert s.counts[UInt128(0)]==d["structural"].total
+        @assert locality_ranks(p).ranks==d["structural"].ranks
+        @assert locality_instance(MersenneTwister(d["specification"].seed),span).A==p.A
         X=zeros(Int,225,500)
         fill_partition_vectors!(MersenneTwister(d["specification"].seed+100_000_000),X,s)
         @assert X==d["initial"]
@@ -58,9 +72,32 @@ function audit_locality_inputs()
     @assert length(signatures)==280
     println("280 inputs verified: fixed sizes, feasibility, DP counts, initial RNG replay")
 end
-if abspath(PROGRAM_FILE)==@__FILE__
+function check_locality_revision()
     check_small_locality()
     audit_locality_inputs()
-    run_locality(5;smoke=true,instances=1:1)
-    run_locality(18;smoke=true,instances=1:1)
+    for span in (5,18)
+        d=load(locality_path(span,1));p=d["instance"];X=Int.(d["initial"])
+        problem=OptimizationProblem(A=p.A,b=p.b,cost_function=x->0.,name="index audit")
+        mps=OhMyU1.build_mps_from_feasible_samples(problem,X,1,false)
+        charges=OhMyU1.compute_link_charges(p.A,p.b,X)
+        bad=0;total=0
+        for j in 1:size(X,1)-1
+            L=OhMyU1.collect_left(mps.Cores[j]);R=OhMyU1.collect_right(mps.Cores[j+1])
+            for k in axes(X,2)
+                q=charges[j+1,:,k]
+                row=OhMyU1.nondeg_merged_index(L,q,mps.Cores[j].Indices[2],X[j,k])
+                col=OhMyU1.nondeg_merged_index(R,q,mps.Cores[j+1].Indices[2],X[j+1,k])
+                bad+=(row!=1 || col!=1);total+=1
+            end
+        end
+        println("Original data span=$span instance=1: incorrectly addressed sample/bond terms $bad / $total")
+    end
+    for objective in ("linear","entropic"),grid in (false,true),span in (5,18)
+        run_locality(span;objective,grid,smoke=true,elements=grid ? 20 : 18,n=grid ? 13 : 15,instances=1:1)
+    end
+    println("All eight paired smoke settings passed (32 solver arms).")
+end
+
+if abspath(PROGRAM_FILE)==@__FILE__
+    check_locality_revision()
 end

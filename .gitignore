@@ -78,3 +78,8 @@ tmp/
 
 # instructions for agents:
 AGENTS.md
+
+# Isolated gradient-audit smoke outputs and atomic temporary files.
+/data/set_partitioning/*/smoke_gradient_v2/
+/data/set_partitioning/locality_grid_v1/**/*.tmp
+/examples/partition_locality_grid/*.log
