@@ -1,0 +1,43 @@
+note = "Initial large-workload reference after the complete regression suite passed; three measured solves after warm-up."
+workload = "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"
+recorded_date = "2026-10-12"
+suite_wall_seconds = 436.52099990844727
+[hardware]
+cpu_model = "Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz"
+logical_cpus = 8
+julia = "1.12.5"
+machine = "x86_64-w64-mingw32"
+[1]
+gc_seconds = 3.7248477
+times = [29.9350711, 29.0722741, 28.3875066]
+parallel_sampling = false
+allocated_bytes = 4432622980.0
+warmup_seconds = 15.242999792098999
+initial_costs = [-11.353635218130908, -11.353635218130908, -11.353635218130908]
+worker_seconds = 138.2079999446869
+passed = true
+threads = 1
+load_seconds = 16.40499997138977
+seconds = 29.0722741
+allocations = [4432624772, 4432622980, 4432621268]
+final_costs = [-13.941870924519275, -13.941870924519275, -13.941870924519275]
+interactive_threads = 1
+max_rss_bytes = 1223614464
+workload = "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"
+[4]
+gc_seconds = 1.8896253
+times = [22.0979704, 21.0322771, 20.8056277]
+parallel_sampling = true
+allocated_bytes = 4479671614.0
+warmup_seconds = 14.608000040054321
+initial_costs = [-11.353635218130908, -11.353635218130908, -11.353635218130908]
+worker_seconds = 108.50300002098083
+passed = true
+threads = 4
+load_seconds = 13.120000123977661
+seconds = 21.0322771
+allocations = [4479674910, 4479668846, 4479671614]
+final_costs = [-13.941870924519275, -13.941870924519275, -13.941870924519275]
+interactive_threads = 1
+max_rss_bytes = 1193795584
+workload = "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"

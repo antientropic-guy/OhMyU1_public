@@ -1,0 +1,50 @@
+note = "Observed performance-only reference; functional failures are documented separately, not waived."
+workload = "assignment5_initial32_samples512_iterations3_seed6021_v1"
+
+[4]
+julia = "1.12.5"
+passed = false
+threads = 4
+cpu = "skylake"
+interactive_threads = 1
+max_rss_bytes = 0x42814000
+worker_seconds = 46.759000062942505
+
+    [4.parallel]
+    cost = 0.0
+    gc_seconds = 0.0
+    seconds = 0.0239386
+    allocated_bytes = 1.8630667e7
+
+    [4.serial]
+    cost = 0.0
+    gc_seconds = 0.0
+    seconds = 0.0402252
+    allocated_bytes = 1.8620091e7
+
+[1]
+julia = "1.12.5"
+passed = false
+threads = 1
+cpu = "skylake"
+interactive_threads = 1
+max_rss_bytes = 0x4cac9000
+worker_seconds = 68.07299995422363
+
+    [1.parallel]
+    cost = 0.0
+    gc_seconds = 0.0
+    seconds = 0.038813
+    allocated_bytes = 1.7276792e7
+
+    [1.serial]
+    cost = 0.0
+    gc_seconds = 0.0
+    seconds = 0.0357779
+    allocated_bytes = 1.727316e7
+
+[hardware]
+cpu_model = "Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz"
+logical_cpus = 8
+julia = "1.12.5"
+machine = "x86_64-w64-mingw32"

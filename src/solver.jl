@@ -116,8 +116,14 @@ end
 """Completes one training step (several sweeps) for mps"""
 function train_step!(mps::U1MPS, T::Matrix{Int}, solver_params::SolverParams, temperature::Float64, cost_function::Function, c_min::Float64)
     t_params = TrainParams(solver_params.LEARNING_RATE, 10^4)  ##TODO: refactor constants;
-    z = sum([exp(-(cost_function(x) - c_min) / temperature) for x in eachcol(T)])
-    probs = [boltzman_probability(cost_function, x_vec, temperature, z, c_min) for x_vec in eachcol(T)]
+    isfinite(temperature) && temperature >= 0 || throw(ArgumentError("Temperature must be finite and nonnegative"))
+    costs = map(cost_function, eachcol(T))
+    all(isfinite, costs) || throw(ArgumentError("Training costs must be finite"))
+    # Shift by the actual batch minimum to avoid underflow. At zero
+    # temperature use the limiting distribution, uniform over all minima.
+    batch_min = minimum(costs)
+    probs = temperature == 0 ? Float64.(costs .== batch_min) : exp.(-(costs .- batch_min) ./ temperature)
+    probs ./= sum(probs)
     train_nondeg!(mps, solver_params.NUM_SWEEP_ITER, T, probs, t_params)
     normalize!(mps)
 end
@@ -125,7 +131,7 @@ end
 function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
     global_charges_memorized::Vector{Set{Vector{Int}}}, graph_dist_global!::Function, sorting_crit::String,
     cost_function::Function,
-    sp::SolverParams, barrier::Bool, k::Int; mixed_proportion::Float64=0.5, rank_weight::Float64=0.5)
+    sp::SolverParams, barrier::Bool, k::Int; mixed_proportion::Float64=0.5, rank_weight::Float64=0.5, incumbent::Union{Nothing,SolverStatistics}=nothing)
 
     num_principal_new = -1  # Default value in case graph distance is not calculated;
     max_graph_dist = -1  # Default value in case graph distance is not calculated;
@@ -135,6 +141,20 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
     num_new = sp.NUM_FEASIBLE_SAMPLES
     @assert num_new > num_to_keep_worst
     num_best_new = num_new - num_to_keep_worst
+
+    # Track only objectives already evaluated by this selection policy.
+    # Updating after the parallel map avoids a shared mutable callback.
+    function candidate_costs(candidates)
+        values = ThreadsX.map(cost_function, eachcol(candidates))
+        if incumbent !== nothing && !isempty(values)
+            value, index = findmin(values)
+            if value < incumbent.c_min
+                incumbent.c_min = value
+                incumbent.incub = copy(candidates[:, index])
+            end
+        end
+        return values
+    end
 
     # Memory for graph calculation:
     n_threads = Threads.nthreads()
@@ -184,7 +204,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         min_graph_dist, max_graph_dist = extrema(graph_dists)
 
     elseif sorting_crit == "best_cost"
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(new_feasible))
+        cost_values = candidate_costs(new_feasible)
         new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, cost_values, rev=false)
 
     elseif sorting_crit == "random"
@@ -208,8 +228,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
             new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, graph_dists, rev=true)
             min_graph_dist, max_graph_dist = extrema(graph_dists)
         else
-            sorting_function = x -> cost_function(x)
-            cost_values = ThreadsX.map(col -> sorting_function(col), eachcol(new_feasible))
+            cost_values = candidate_costs(new_feasible)
             new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, cost_values, rev=false)
         end
         
@@ -228,7 +247,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         end
         num_principal_new = count(!iszero, graph_dists)
         min_graph_dist, max_graph_dist = extrema(graph_dists)
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(new_feasible))
+        cost_values = candidate_costs(new_feasible)
         mixed_values = graph_dists .* (-alpha) .+ (1 - alpha) .* cost_values
         new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, mixed_values, rev=false)
 
@@ -251,7 +270,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         new_feasible_graph = nf_sorted[:, 1:num_graph]
 
         nf_remaining = view(nf_sorted, :, num_graph+1:size(nf_sorted, 2))
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(nf_remaining))
+        cost_values = candidate_costs(nf_remaining)
 
         new_feasible_cost = pick_best_samples(nf_remaining, num_cost, cost_values, rev=false)
         new_feasible = hcat(new_feasible_cost, new_feasible_graph)
@@ -280,7 +299,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         nf_sorted = view(new_feasible, :, perm)
         new_feasible_graph = nf_sorted[:, 1:num_graph]
         nf_remaining = view(nf_sorted, :, num_graph+1:size(nf_sorted, 2))
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(nf_remaining))
+        cost_values = candidate_costs(nf_remaining)
         new_feasible_cost = pick_best_samples(nf_remaining, num_cost, cost_values, rev=false)
         new_feasible = hcat(new_feasible_cost, new_feasible_graph)
         max_graph_dist = graph_dists[perm[1]]
@@ -304,7 +323,9 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
             end
         end
 
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(new_feasible))
+        num_principal_new = count(!iszero, graph_dists)
+        min_graph_dist, max_graph_dist = extrema(graph_dists)
+        cost_values = candidate_costs(new_feasible)
         perm_cost = sortperm(cost_values; rev=false)
         best_cost = view(new_feasible, :, perm_cost[1:num_cost])
 
@@ -314,16 +335,12 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         if isempty(positive_idx)
             # fallback: 
             new_feasible = new_feasible[:, perm_cost[1:num_new]]
-            max_graph_dist = 0
-            min_graph_dist = 0
-            num_principal_new = 0
         else
             cost_pos = cost_values[positive_idx]
             perm_pos = sortperm(cost_pos; rev=false)
             num_graph = min(num_graph, length(perm_pos))
             best_graph = view(new_feasible, :, positive_idx[perm_pos[1:num_graph]])
             new_feasible = hcat(best_cost, best_graph)
-            max_graph_dist, min_graph_dist = extrema(graph_dists)
         end
 
     elseif sorting_crit == "weighted rank"
@@ -340,7 +357,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         end
         num_principal_new = count(!iszero, graph_dists)
         min_graph_dist, max_graph_dist = extrema(graph_dists)
-        cost_values = ThreadsX.map(col -> cost_function(col), eachcol(new_feasible))
+        cost_values = candidate_costs(new_feasible)
 
         graph_ranks = invperm(sortperm(graph_dists, rev=true))
         cost_ranks = invperm(sortperm(cost_values, rev=false))
@@ -445,7 +462,7 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         normalize!(mps)
 
         # Learning step
-        temperature = std(costs)
+        temperature = length(costs) > 1 ? std(costs) : 0.0
         train_step!(mps, T, sp, temperature, cost_function, solver_stats.learning_curve[end])
         solver_stats.temperature = temperature
 
@@ -470,8 +487,10 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         T, costs = sort_and_truncate(T, cost_function, size(T, 2))
         best_samples = T[:, 1:num_to_keep]
         best_costs = mapslices(cost_function, best_samples, dims=1)
-        solver_stats.c_min = minimum(best_costs)
-        solver_stats.incub = best_samples[:, 1]
+        if costs[1] < solver_stats.c_min
+            solver_stats.c_min = costs[1]
+            solver_stats.incub = copy(T[:, 1])
+        end
 
         # Update learning curve and statistics:
         push!(solver_stats.learning_curve, solver_stats.c_min)
@@ -498,7 +517,7 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         solver_stats.num_principal_new, 
         solver_stats.max_graph_dist, 
         solver_stats.min_graph_dist, 
-        solver_stats.num_to_keep_worst = pick_diverse_data!(mps, X,  global_charges_memorized, graph_dist_global!, sorting_crit, cost_function, sp, barrier, k, mixed_proportion=mixed_proportion, rank_weight=rank_weight)
+        solver_stats.num_to_keep_worst = pick_diverse_data!(mps, X,  global_charges_memorized, graph_dist_global!, sorting_crit, cost_function, sp, barrier, k, mixed_proportion=mixed_proportion, rank_weight=rank_weight, incumbent=solver_stats)
         
         if debug
             @assert allcols_AX_equal_b(opt_problem.A, T, opt_problem.b)
@@ -509,6 +528,13 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
         T = hcat(best_samples, view(T, :, keep_indices))  # Not to loose best (in cost) samples;
         T, costs = sort_and_truncate(T, cost_function, size(T, 2))
         best_samples = T[:, 1:num_to_keep]
+        if costs[1] < solver_stats.c_min
+            solver_stats.c_min = costs[1]
+            solver_stats.incub = copy(T[:, 1])
+        end
+        # Complete this iteration after the external batch has been evaluated.
+        solver_stats.learning_curve[end] = solver_stats.c_min
+        solver_stats.utility_curve[end] = mean(view(costs, 1:num_to_keep))
 
         if print_stats
             print_statistics(solver_stats)

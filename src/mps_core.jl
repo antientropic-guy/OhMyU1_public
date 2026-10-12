@@ -190,6 +190,9 @@ mutable struct U1Matrix{S, Y}<:AbstractU1Tensor
     XboundsDict::Dict{Vector{S}, Vector{S}}
     SplitIndicesDict::Dict{Vector{S}, Vector{Tuple{S, S}}}
     Flux::Vector{S}
+    # First flattened coordinate for (retained bond charge, physical value).
+    # For nondegenerate bonds this is the complete row/column index.
+    Xpositions::Dict{Tuple{Vector{S}, S}, Int}
 end
 
 # Operations with U1-symmetric tensors:
@@ -294,6 +297,7 @@ function collect_left(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     # Dicts needed for restoring shape:
     x_bounds_dict = Dict{Vector{S}, Vector{S}}()
     split_indices_dict = Dict{Vector{S}, Vector{Tuple{S, S}}}()
+    x_positions = Dict{Tuple{Vector{S}, S}, Int}()
 
     # Dictionary for reshaping:
     for charges_tuple in keys(core.Blocks)
@@ -320,12 +324,16 @@ function collect_left(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
             reshaped_block = reshape(block, s[1]*s[2], s[3])
             blocks[i] = reshaped_block
             last_el = x_bounds_dict_charge[end]
+            for (x, (physical_charge, within_sector)) in indices[2].InvXindex
+                physical_charge == site_charge || continue
+                x_positions[(charge, x)] = last_el + s[1] * (within_sector - 1) + 1
+            end
             push!(x_bounds_dict_charge, last_el + s[1]*s[2])
             push!(split_indices_dict_charge, (s[1], s[2]))
         end
         dumb_dict[charge] = reduce(vcat, blocks)
     end
-    return U1Matrix{S, Y}(dumb_dict, indices, charges_degeneracy_dict, x_bounds_dict, split_indices_dict, flux)
+    return U1Matrix{S, Y}(dumb_dict, indices, charges_degeneracy_dict, x_bounds_dict, split_indices_dict, flux, x_positions)
 end
 
 """
@@ -348,6 +356,7 @@ function collect_right(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
     # Dicts needed for restoring shape:
     x_bounds_dict = Dict{Vector{S}, Vector{S}}()
     split_indices_dict = Dict{Vector{S}, Vector{Tuple{S, S}}}()
+    x_positions = Dict{Tuple{Vector{S}, S}, Int}()
     
     # Dictionary for reshaping:
     for charges_tuple in keys(core.Blocks)
@@ -374,12 +383,16 @@ function collect_right(core::U1Core{S, Y}) where {S<:Integer, Y<:AbstractFloat}
             reshaped_block = reshape(block, s[1], s[2] * s[3])
             blocks[i] = reshaped_block
             last_el = x_bounds_dict_charge[end]
+            for (x, (physical_charge, within_sector)) in indices[2].InvXindex
+                physical_charge == site_charge || continue
+                x_positions[(charge, x)] = last_el + within_sector
+            end
             push!(x_bounds_dict_charge, last_el + s[2]*s[3])
             push!(split_indices_dict_charge, (s[2], s[3]))
         end
         dumb_dict[charge] = reduce(hcat, blocks)
     end
-    return U1Matrix{S, Y}(dumb_dict, indices, charges_degeneracy_dict, x_bounds_dict, split_indices_dict, flux)
+    return U1Matrix{S, Y}(dumb_dict, indices, charges_degeneracy_dict, x_bounds_dict, split_indices_dict, flux, x_positions)
 end
 
 """
@@ -753,66 +766,66 @@ Uses thread-local RNGs and parallel sampling. Currently assumes binary domains.
 """
 function sample_nondeg_parallel!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
 
-    #TODO: seems, it will not work for non-binary case;
-    rngs = [Random.TaskLocalRNG() for _ in 1:Threads.nthreads()]
-    # mps_copies = [deepcopy(mps) for _ in 1:Threads.nthreads()]
-    max_domain_size = maximum([length(c.Indices[2].FlatDomain) for c in mps.Cores])
+    num_samples >= 0 || throw(ArgumentError("num_samples must be nonnegative"))
+    size(mem_buf, 1) == length(mps.Cores) && size(mem_buf, 2) >= num_samples ||
+        throw(DimensionMismatch("Sampling buffer does not match the requested batch"))
+    num_samples == 0 && return nothing
+    num_chunks = min(Threads.nthreads(), num_samples)
+    max_domain_size = maximum(length(c.Indices[2].FlatDomain) for c in mps.Cores)
     N_constr = length(first(mps.Cores[1].Indices[1].Charges))
-    v_vec_mem = [zeros(Y, max_domain_size) for _ in 1:Threads.nthreads()]
-    prob_vec_mem = [zeros(Y, max_domain_size) for _ in 1:Threads.nthreads()]
-    mps_mem_copies = [Vector{S}(undef, N_constr) for _ in 1:Threads.nthreads()]
 
-    Threads.@threads for sample_iter in 1:num_samples
-        
-        tid = Threads.threadid()
-        rng = rngs[tid - 1]
-        # local mps = mps_copies[tid - 1]
-        mps_mem = mps_mem_copies[tid - 1]
-
+    # Each chunk owns its scratch arrays, even if its task migrates between
+    # threads. No global thread IDs, locks, or copies of the MPS are needed.
+    Threads.@threads for chunk in 1:num_chunks
+        rng = Random.TaskLocalRNG()
+        mps_mem = Vector{S}(undef, N_constr)
+        v_vec = zeros(Y, max_domain_size)
+        probability_vec = zeros(Y, max_domain_size)
         core1 = mps.Cores[1]
         b_charge = first(core1.Indices[1].Charges)
         x1_domain = core1.Indices[2].FlatDomain
-        v_vec = v_vec_mem[tid - 1]
-        probability_vec = prob_vec_mem[tid - 1]
-        
-        for (i, x1) in enumerate(x1_domain)
-            v_vec[i] = getval(mps_mem, core1, b_charge, x1)
-            probability_vec[i] = v_vec[i] * v_vec[i]
-        end
-
-        x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(probability_vec))
-    
-        # Input to the cycle:
-        x1_val = x1_domain[x1_ind]
-        mem_buf[1, sample_iter] = x1_val
-        v = v_vec[x1_ind]
-        prob = probability_vec[x1_ind]
-    
-        #TODO: simplify logic
-        site_charge, _ = core1.Indices[2].InvXindex[x1_val]
-        left_charge = b_charge .- site_charge
-    
-        for j in 2:length(mps.Cores)
-            core = mps.Cores[j]
-            xj_domain = core.Indices[2].FlatDomain
-            inv_sqrt_prob = 1 / sqrt(prob)
-            for (i, xj) in enumerate(xj_domain)
-                temp_v = inv_sqrt_prob * v * getval(mps_mem, core, left_charge, xj)
-                v_vec[i] = temp_v
-                probability_vec[i] = temp_v * temp_v
+        first_sample = fld((chunk - 1) * num_samples, num_chunks) + 1
+        last_sample = fld(chunk * num_samples, num_chunks)
+        for sample_iter in first_sample:last_sample
+            for (i, x1) in enumerate(x1_domain)
+                v_vec[i] = getval(mps_mem, core1, b_charge, x1)
+                probability_vec[i] = v_vec[i] * v_vec[i]
             end
-            xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(probability_vec))
+
+            x1_ind = StatsBase.sample(rng, 1:length(x1_domain), Weights(probability_vec))
     
             # Input to the cycle:
-            xj_val = xj_domain[xj_ind]
-            mem_buf[j, sample_iter] = xj_val
-            v = v_vec[xj_ind]
-            prob = probability_vec[xj_ind]
-        
-            #TODO: simplify logic
-            site_charge, _ = core.Indices[2].InvXindex[xj_val]
-            left_charge .-= site_charge
+            x1_val = x1_domain[x1_ind]
+            mem_buf[1, sample_iter] = x1_val
+            v = v_vec[x1_ind]
+            prob = probability_vec[x1_ind]
     
+            #TODO: simplify logic
+            site_charge, _ = core1.Indices[2].InvXindex[x1_val]
+            left_charge = b_charge .- site_charge
+    
+            for j in 2:length(mps.Cores)
+                core = mps.Cores[j]
+                xj_domain = core.Indices[2].FlatDomain
+                inv_sqrt_prob = 1 / sqrt(prob)
+                for (i, xj) in enumerate(xj_domain)
+                    temp_v = inv_sqrt_prob * v * getval(mps_mem, core, left_charge, xj)
+                    v_vec[i] = temp_v
+                    probability_vec[i] = temp_v * temp_v
+                end
+                xj_ind = StatsBase.sample(rng, 1:length(xj_domain), Weights(probability_vec))
+    
+                # Input to the cycle:
+                xj_val = xj_domain[xj_ind]
+                mem_buf[j, sample_iter] = xj_val
+                v = v_vec[xj_ind]
+                prob = probability_vec[xj_ind]
+        
+                #TODO: simplify logic
+                site_charge, _ = core.Indices[2].InvXindex[xj_val]
+                left_charge .-= site_charge
+    
+            end
         end
     end
     return nothing

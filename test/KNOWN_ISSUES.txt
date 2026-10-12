@@ -1,0 +1,44 @@
+REGRESSION HISTORY: SIX REPAIRED DEFECTS
+======================================
+The initial test-only change exposed these failures. They were subsequently
+repaired with the project owner's authorization. Tests remain enabled.
+
+1. Parallel sampling depended on threadid()-1.
+   Buffers now belong to contiguous sample chunks, not thread IDs. A migrating
+   task retains its own scratch arrays; simultaneous calls share only read-only
+   MPS data. No locks or MPS copies are introduced. Tests cover 1 and 4 default
+   threads with an interactive pool, plus 4 without one, nested calls and small
+   batches. Parallel RNG streams need not match those of the previous scheduler.
+
+2. Constant objectives produced exp(-0/0) and invalid training weights.
+   Zero temperature now gives the limiting Boltzmann distribution: uniform on
+   batch minima (uniform on all samples for constant cost). Positive-temperature
+   weights are shifted by the actual batch minimum before exponentiation.
+   Costs are evaluated once rather than twice. A singleton has temperature zero.
+
+3. The final external improvement was missing from the returned incumbent.
+   Selection can now update a supplied incumbent using costs it already computed,
+   including evaluated candidates discarded by ADD. The update occurs after the
+   parallel map, with no shared mutation inside the objective callback. The solver
+   also records the best selected point and completes each curve entry after the
+   external batch. Graph-only selection does not evaluate otherwise unused costs.
+   Incumbent updates do not change the selected training columns.
+
+4. Independent best/worst partial sorts repeated candidate indices on ties.
+   Worst candidates are now selected from indices not already in the best set.
+   The common zero-worst branch is unchanged. Equal input columns are not globally
+   deduplicated: the fix prevents selecting the same input index twice.
+
+5. GDF's positive-distance counter stayed at -1 or was reset incorrectly.
+   It now uses the already computed graph distances, including when every novel
+   candidate is in the best-cost subset and the remaining subset triggers fallback.
+   BestCost without a barrier keeps -1 (not measured) and never evaluates graph
+   distance solely for diagnostics. With a barrier, distances are needed by policy.
+
+6. GDF's distance extrema were reversed.
+   Diagnostics now assign (minimum, maximum) in the correct order, describing
+   the candidate pool used by selection (after barrier filtering, if active).
+
+These repairs do not establish correctness for arbitrary unsupported tensor
+representations. See README.txt for the exact coverage and performance policy.
+The historical performance reference is retained unchanged.

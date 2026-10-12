@@ -207,7 +207,12 @@ function pick_mixed_samples(samples::AbstractMatrix{Int}, k_best::Int, k_worst::
     k_worst = min(n - k_best, k_worst)
     idx_best = partialsortperm(costs_vector, 1:k_best, rev=rev)
     if k_worst > 0
-        idx_worst = partialsortperm(costs_vector, 1:k_worst, rev=!rev)
+        # Exclude best indices before selecting the worst: ties must not
+        # select a candidate twice.
+        available = trues(n)
+        available[idx_best] .= false
+        remaining = findall(available)
+        idx_worst = remaining[partialsortperm(view(costs_vector, remaining), 1:k_worst, rev=!rev)]
         idx = vcat(idx_best, idx_worst)
     else
         idx = idx_best

@@ -1,0 +1,52 @@
+# saved_random_* matrices were generated once with Python Random(931721),
+# integer coefficients in -1:1 and a feasible binary witness. The literal
+# matrices below, not an RNG implementation, are the regression inputs.
+# Fixed readable fixtures. Binary vector order is x1-first (little endian).
+
+[[problem]]
+name = "cardinality"
+A = [[1, 1, 1, 1]]
+b = [2]
+training_ids = [3, 12]
+
+[[problem]]
+name = "zero_columns"
+A = [[1, 0, 1, 0]]
+b = [1]
+training_ids = [1, 4, 11]
+
+[[problem]]
+name = "all_zero"
+A = [[0, 0, 0]]
+b = [0]
+training_ids = [0, 7]
+
+[[problem]]
+name = "unique"
+A = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+b = [1, 0, 1]
+training_ids = [5]
+
+[[problem]]
+name = "redundant"
+A = [[1, 1, 1, 1], [2, 2, 2, 2]]
+b = [2, 4]
+training_ids = [3, 5, 10, 12]
+
+[[problem]]
+name = "saved_random_1"
+A = [[0, -1, 0, 0, 0, 1], [0, 0, -1, -1, 1, -1]]
+b = [1, -2]
+training_ids = [36, 40, 60]
+
+[[problem]]
+name = "saved_random_2"
+A = [[0, 1, 0, -1, 0, 0], [1, 1, 0, 0, -1, -1]]
+b = [0, 1]
+training_ids = [1, 10, 27, 43]
+
+[[problem]]
+name = "saved_random_3"
+A = [[0, 1, 0, 1, 1, 0], [1, 1, 0, 0, -1, 1]]
+b = [1, 0]
+training_ids = [8, 17, 48]
