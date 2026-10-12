@@ -9,6 +9,23 @@ Base.@kwdef struct SolverParams
     KEEP_NUM_WORST::Float64 = 0.05
 end
 
+
+# Scratch belongs to a chunk, not to a physical thread ID. There is no
+# Channel traffic per sample, including in concurrent solver invocations.
+function graph_distances(samples, mps, memorized, distance!::F=graph_dist_global!) where {F}
+    count = size(samples,2)
+    distances = Vector{Int}(undef, count)
+    chunks = min(Threads.nthreads(), count)
+    initial = first(mps.LinkIndices[1].Charges)
+    Threads.@threads for chunk in 1:chunks
+        buffer = similar(initial)
+        for j in fld((chunk-1)*count,chunks)+1:fld(chunk*count,chunks)
+            distances[j] = distance!(buffer, view(samples,:,j), mps, memorized)
+        end
+    end
+    return distances
+end
+
 function get_mps(A, b, num_feasible_samples::Int)
 
     x_domains = [[0, 1] for _ in 1:size(A, 2)]
@@ -114,8 +131,8 @@ function build_mps_from_feasible_samples(opt_problem::OptimizationProblem, T::Ma
 end
 
 """Completes one training step (several sweeps) for mps"""
-function train_step!(mps::U1MPS, T::Matrix{Int}, solver_params::SolverParams, temperature::Float64, cost_function::Function, c_min::Float64)
-    t_params = TrainParams(solver_params.LEARNING_RATE, 10^4)  ##TODO: refactor constants;
+function train_step!(mps::U1MPS, T::Matrix{Int}, solver_params::SolverParams, temperature::Float64, cost_function::Function, c_min::Float64; factorization_backend::Symbol=:fast)
+    t_params = TrainParams(solver_params.LEARNING_RATE, 10^4; backend=factorization_backend)  ##TODO: refactor constants;
     isfinite(temperature) && temperature >= 0 || throw(ArgumentError("Temperature must be finite and nonnegative"))
     costs = map(cost_function, eachcol(T))
     all(isfinite, costs) || throw(ArgumentError("Training costs must be finite"))
@@ -156,24 +173,8 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         return values
     end
 
-    # Memory for graph calculation:
-    n_threads = Threads.nthreads()
-    BUFFERS = [Vector{Int}(undef, length(first(mps.LinkIndices[1].Charges))) for _ in 1:n_threads]
-    buffer_pool = Channel{Int}(n_threads)
-    for i in 1:n_threads
-        put!(buffer_pool, i)
-    end
-
     if barrier
-        graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-        id = take!(buffer_pool)
-        buffer = BUFFERS[id]
-        try
-            graph_dist_global!(buffer, col, mps, global_charges_memorized)
-        finally
-            put!(buffer_pool, id)
-        end
-    end
+        graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         num_principal_new = count(!iszero, graph_dists)
         if num_principal_new > num_new
             mask = findall(!iszero, graph_dists)
@@ -189,15 +190,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
 
     if sorting_crit == "graph_dist"
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-        id = take!(buffer_pool)
-        buffer = BUFFERS[id]
-        try
-            graph_dist_global!(buffer, col, mps, global_charges_memorized)
-        finally
-            put!(buffer_pool, id)
-        end
-        end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
     end
         num_principal_new = count(!iszero, graph_dists)
         new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, graph_dists, rev=true)
@@ -214,15 +207,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
     elseif sorting_crit == "alternating"
         if iseven(k)
             if !barrier
-                graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-                id = take!(buffer_pool)
-                buffer = BUFFERS[id]
-                try
-                    graph_dist_global!(buffer, col, mps, global_charges_memorized)
-                finally
-                    put!(buffer_pool, id)
-                end
-            end
+                graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
             end
             num_principal_new = count(!iszero, graph_dists)
             new_feasible = pick_mixed_samples(new_feasible, num_best_new, num_to_keep_worst, graph_dists, rev=true)
@@ -235,15 +220,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
     elseif sorting_crit == "linear annealing"
         alpha = max(0.0, 1.0 - k/sp.NUM_GLOBAL_ITER)
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-            id = take!(buffer_pool)
-            buffer = BUFFERS[id]
-            try
-                graph_dist_global!(buffer, col, mps, global_charges_memorized)
-            finally
-                put!(buffer_pool, id)
-            end
-        end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         end
         num_principal_new = count(!iszero, graph_dists)
         min_graph_dist, max_graph_dist = extrema(graph_dists)
@@ -255,15 +232,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         num_graph = round(Int, num_new * mixed_proportion)
         num_cost = num_new - num_graph
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-            id = take!(buffer_pool)
-            buffer = BUFFERS[id]
-            try
-                graph_dist_global!(buffer, col, mps, global_charges_memorized)
-            finally
-                put!(buffer_pool, id)
-            end
-    end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         end
         perm = sortperm(graph_dists, rev=true)
         nf_sorted = view(new_feasible, :, perm)
@@ -285,15 +254,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         num_graph = round(Int, alpha * num_new)
         num_cost = num_new - num_graph
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-            id = take!(buffer_pool)
-            buffer = BUFFERS[id]
-            try
-                graph_dist_global!(buffer, col, mps, global_charges_memorized)
-            finally
-                put!(buffer_pool, id)
-            end
-        end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         end
         perm = sortperm(graph_dists, rev=true)
         nf_sorted = view(new_feasible, :, perm)
@@ -312,15 +273,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
         num_graph = round(Int, num_new * mixed_proportion)
         num_cost  = num_new - num_graph
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-                id = take!(buffer_pool)
-                buffer = BUFFERS[id]
-                try
-                    graph_dist_global!(buffer, col, mps, global_charges_memorized)
-                finally
-                    put!(buffer_pool, id)
-                end
-            end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         end
 
         num_principal_new = count(!iszero, graph_dists)
@@ -345,15 +298,7 @@ function pick_diverse_data!(mps::U1MPS, new_feasible::Matrix{Int},
 
     elseif sorting_crit == "weighted rank"
         if !barrier
-            graph_dists = ThreadsX.map(eachcol(new_feasible)) do col
-            id = take!(buffer_pool)
-            buffer = BUFFERS[id]
-            try
-                graph_dist_global!(buffer, col, mps, global_charges_memorized)
-            finally
-                put!(buffer_pool, id)
-            end
-        end
+            graph_dists = graph_distances(new_feasible, mps, global_charges_memorized, graph_dist_global!)
         end
         num_principal_new = count(!iszero, graph_dists)
         min_graph_dist, max_graph_dist = extrema(graph_dists)
@@ -401,7 +346,7 @@ end
 
 
 function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, solver_params::SolverParams, sorting_crit::String; 
-    diversify=false, barrier=false, mixed_proportion::Float64=0.5, rank_weight::Float64=0.5, parallel::Bool=true, print_stats::Bool=true, debug::Bool=false)
+    diversify=false, barrier=false, mixed_proportion::Float64=0.5, rank_weight::Float64=0.5, parallel::Bool=true, print_stats::Bool=true, debug::Bool=false, factorization_backend::Symbol=:fast)
 
     # Global charges updater:
     function UpdateGlobalCharges!(mps::U1MPS{T, N}) where {T<:Integer, N<:AbstractFloat}
@@ -457,13 +402,13 @@ function solve(opt_problem::OptimizationProblem, feasible_sampler!::Function, so
 
         # MPS initialization (with diversification if specified)
         mps = build_mps_from_feasible_samples(opt_problem, T, sp.LINK_DEGENERACY, diversify)
-        orthogonalize!(mps)
+        orthogonalize!(mps; backend=factorization_backend)
         solver_stats.num_samples_in_mps = Int(round(u1_norm(mps) ^ 2))
         normalize!(mps)
 
         # Learning step
         temperature = length(costs) > 1 ? std(costs) : 0.0
-        train_step!(mps, T, sp, temperature, cost_function, solver_stats.learning_curve[end])
+        train_step!(mps, T, sp, temperature, cost_function, solver_stats.learning_curve[end]; factorization_backend)
         solver_stats.temperature = temperature
 
         # Sampling

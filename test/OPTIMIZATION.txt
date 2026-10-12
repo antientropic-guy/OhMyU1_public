@@ -1,0 +1,123 @@
+ASSIGNMENT TUNING AND LIBRARY OPTIMIZATION, 2026-10-12
+====================================================
+Cluster tuning
+--------------
+    bash scripts/bash/run_ADD_tuning.sh
+
+Four independent Slurm array tasks: BestCost and three ADD strategies. Each uses
+one exclusive c32m384 node (32 CPUs, all node memory), at most four live solves,
+and separate files. Weights 0.1/0.2/0.3/0.4 for Mixed Selection/GDF and
+0.1/0.35/0.5/0.7 for Weighted Rank, n=12:16, 50 training instances per
+size and objective. Both linear and quadratic training files are used, with
+objectives processed sequentially within each job. Total: 6,000 ADD + 500 BestCost
+runs. See scripts/ADD_tuning.txt for settings, seeds, dictionaries and resumption.
+No test-set selection, AB analysis, EELS rerun or ConstrainTNet comparison was
+performed. Existing experimental results are retained.
+
+Historical benchmark protocol
+-----------------------------
+The measurements below include the binary-charge mask specialization, which was
+subsequently removed at the project owner's request. They document that measured
+revision, not current graph-distance performance. All matrices now use the general
+vector-based path with task-owned scratch and no per-candidate Channel operations.
+
+Local native Windows, Intel Core i5-10210U, 8 logical CPUs, Julia 1.12.5, BLAS=1.
+One or four Julia default threads, plus one idle interactive thread. Processes
+were run sequentially. Fresh baseline source: commit
+207cf98daf5188fd18caac913ba3358b502abd8f (already containing the previous index fixes).
+
+Assignment n=10, 100 binary variables, 20 equalities; initial 1,000 uniform random
+permutations, 5,000 MPS draws per iteration, 10 iterations, two training sweeps,
+learning rate 0.05, 5 percent elites, no worst retention, no EELS/barrier. The
+external source fills the solver candidate pool to 20,000. Standard normal
+linear coefficients, separate deterministic source/model seeds; see
+large_performance.jl for the complete workload. GDF uses weight 0.4.
+
+One-iteration warm-up, explicit GC before each of three measured full solves.
+The table uses medians. Import, warm-up and profiling time are excluded.
+Allocated GB are cumulative allocations during a solve, not simultaneous RAM.
+
+Strategy         Threads Before s  After s Speedup Before GB After GB
+BestCost          1    16.158    5.154   3.13x    4.506    2.565
+BestCost          4    14.169    6.552   2.16x    4.555    2.604
+ADD/GDF w=0.4     1    20.442    7.108   2.88x    4.887    2.883
+ADD/GDF w=0.4     4    21.761    6.944   3.13x    4.902    2.886
+
+All before/after repetitions returned the same feasible objective value,
+-13.941870924519275, from initial best value -11.353635218130908. This is a speed
+benchmark, not a statistical comparison of optimization quality.
+
+Process peak RSS (includes Julia, imports and JIT; decimal GB):
+  1 thread(s): 1.251 before, 1.252 after.
+  4 thread(s): 1.145 before, 1.281 after.
+Peak memory did not improve like cumulative allocations; the new per-call caches
+trade some live storage for fewer repeated operations. Historical RSS guards pass.
+
+An independent full-suite run measured BestCost medians 6.702 s (one thread) and
+4.949 s (four threads). The dedicated table instead shows 5.154 s and 6.552 s.
+Thus the before/after optimization gain is clear, but 1-to-4-thread scaling is
+not stable on this laptop. CPU load, frequency, GC and scheduling affect these
+short workloads. Do not claim a universal parallel speedup or extrapolate the
+absolute times to the cluster. Independent solver instances are the primary
+parallelism used by the tuning runner. All raw repetitions, RSS and source hashes
+are retained in fixtures/optimization_20261012.json.
+
+Implementation
+--------------
+1. Nondegenerate one-row sector LQ becomes direct, scaled norm accumulation and
+   normalization. Zero rows receive an isometric completion while their incoming
+   amplitudes become zero. General bond degeneracies retain library LQ.
+2. Leading singular triplets for 1xn/nx1/2x2 blocks are computed directly, with
+   scaling before squaring. Larger blocks use LAPACK. TrainParams has concrete
+   floating-point fields. Full library backends remain selectable.
+3. Training weights for equal (middle charge, physical pair) are aggregated once
+   per training call, and charges are reused. Core values come from the reshaped
+   matrices. This is algebraically the same gradient, including its normalization
+   term and non-unit target weight sum.
+4. Sampling compiles charges to integer transitions and cumulative probabilities
+   once per batch. Inner draw loops do not hash vector-valued charges. Tables are
+   rebuilt after updates; exact dense Born probabilities are regression-tested.
+5. Graph-distance scratch is task-owned, eliminating Channel operations per
+   candidate. The measured revision also packed binary residual charges; this
+   specialization has since been removed. The general path handles all charges.
+
+Dictionary construction remains sequential. Relevant ideas from
+codex/reproducible-rng were reviewed; the old branch was not merged wholesale.
+The current corrected gradient/indexing and thread ownership were preserved.
+Floating-point regrouping, nonunique singular vectors and draw implementation
+can change exact stochastic trajectories. Reproducibility requires the same code
+and runtime settings; equality across implementations is not promised.
+
+Validation and reproduction
+---------------------------
+Full suite: 4,796 assertions passed, about 301 seconds including imports/JIT.
+One/four-thread and no-interactive-pool tests passed. Historical speed/allocation/
+RSS thresholds were not relaxed. New tests cover extreme-scale Float32/Float64
+factorization against LAPACK, repeated/zero singular values, full training,
+zero rows, split target weights, exact sampling probabilities, unequal physical
+domains, signed charges, large constraint counts, and nested concurrent invocations.
+
+    julia --startup-file=no --project=. test/runtests.jl
+    julia --startup-file=no --project=. --threads=1,1 test/benchmark_assignment.jl
+    julia --startup-file=no --project=. --threads=4,1 test/benchmark_assignment.jl
+
+Run benchmark processes sequentially. See README.txt for backend switches and
+full test coverage. The runner separately validates all training input paths and
+hashes; local smoke checks exercise all four strategies, both objectives, paired
+initial datasets, saving and checkpoint resumption. The cluster jobs themselves
+must be submitted on the user's cluster.
+
+Follow-up: general graph distances without binary masks
+------------------------------------------------------
+Both mask helpers and their dispatch branch were removed. The same chunk-owned
+vector-buffer implementation now handles all matrices and charges. The existing
+fast-path/strategy checks passed on one and four threads (775 assertions per
+process), plus 24 end-to-end assertions per process. No full-suite rerun was
+needed for this removal; the earlier full-suite result remains historical.
+The assignment n=10 GDF workload above was remeasured, with identical settings,
+a warm-up and three repetitions per process:
+1 thread(s): median 9.343 s; repetitions 10.898, 9.337, 9.343 s; allocated 2.877 GB per solve.
+4 thread(s): median 6.214 s; repetitions 6.509, 6.214, 6.197 s; allocated 2.879 GB per solve.
+All final costs remained -13.941870924519275. Compare these measurements with
+the original baseline, not as a controlled estimate of the mask specialization
+in isolation: the local runtime measurements fluctuate between runs.

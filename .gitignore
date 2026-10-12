@@ -83,3 +83,8 @@ AGENTS.md
 /data/set_partitioning/*/smoke_gradient_v2/
 /data/set_partitioning/locality_grid_v1/**/*.tmp
 /examples/partition_locality_grid/*.log
+
+# Assignment ADD tuning launcher and documentation.
+!/scripts/bash/run_ADD_tuning.sh
+!/scripts/ADD_tuning.txt
+/data/assignment_add_tuning_v1/smoke_*/

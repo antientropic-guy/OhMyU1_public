@@ -519,8 +519,40 @@ Orthogonalize a U1-symmetric MPS in place.
 # Notes
 Moves orthogonality center to site 1 using successive LQ decompositions.
 """
-function orthogonalize!(mps::U1MPS{S, Y}) where {S<:Integer, Y<:AbstractFloat}
+function orthogonalize!(mps::U1MPS{S, Y}; backend::Symbol=:fast) where {S<:Integer, Y<:AbstractFloat}
+    backend in (:fast, :lapack) || throw(ArgumentError("Unknown factorization backend: $backend"))
     if mps.ort_center == 1
+        return nothing
+    elseif backend == :fast && all(size(B,1)==size(B,3)==1 for c in mps.Cores for B in values(c.Blocks))
+        # LQ of a one-row sector is its norm and normalized row. Work on
+        # existing blocks, without reshaping or allocating LAPACK workspaces.
+        for n in length(mps.Cores):-1:2
+            core = mps.Cores[n]
+            scales = Dict{Vector{S},Y}()
+            for ((left, _, _), B) in core.Blocks
+                s = get(scales, left, zero(Y))
+                for value in B; s = hypot(s, value); end
+                scales[left] = s
+            end
+            zero_rows = Set{Vector{S}}()
+            for ((left, _, _), B) in core.Blocks
+                s = scales[left]
+                if iszero(s)
+                    # Complete a zero row to an isometry; its incoming
+                    # amplitudes are multiplied by zero below.
+                    fill!(B, zero(Y))
+                    if !(left in zero_rows)
+                        B[1] = one(Y); push!(zero_rows, left)
+                    end
+                else
+                    B ./= s
+                end
+            end
+            for ((_, _, right), B) in mps.Cores[n-1].Blocks
+                B .*= scales[right]
+            end
+        end
+        mps.ort_center = 1
         return nothing
     else
         num_sites = length(mps.Cores)
@@ -764,7 +796,7 @@ Sample feasible points from a non-degenerate U1-symmetric MPS in parallel.
 # Notes
 Uses thread-local RNGs and parallel sampling. Currently assumes binary domains.
 """
-function sample_nondeg_parallel!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+function sample_nondeg_parallel_legacy!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
 
     num_samples >= 0 || throw(ArgumentError("num_samples must be nonnegative"))
     size(mem_buf, 1) == length(mps.Cores) && size(mem_buf, 2) >= num_samples ||
@@ -846,7 +878,7 @@ so, it may be easily used for parallelization by optimization problems.
 - `Nothing`.
 
 """
-function sample_nondeg!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
+function sample_nondeg_legacy!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) where {S<:Integer, Y<:AbstractFloat}
 
     #TODO: seems, it will not work for non-binary case;
     rng = Random.TaskLocalRNG()
@@ -902,4 +934,91 @@ function sample_nondeg!(mps::U1MPS{S, Y}, mem_buf::Matrix{S}, num_samples::Int) 
         end
     end
     return nothing
+end
+
+
+# Compile vector-valued charges to integer state IDs once per sampling batch.
+# Tables are rebuilt after every model update; no stale cache is stored in MPS.
+struct NondegSamplingTable{S<:Integer,Y<:AbstractFloat}
+    cumulative::Vector{Matrix{Y}}
+    next_state::Vector{Matrix{Int}}
+    domains::Vector{Vector{S}}
+    initial_state::Int
+end
+
+function nondeg_sampling_table(mps::U1MPS{S,Y}) where {S,Y}
+    mps.ort_center == 1 || throw(ArgumentError("Sampling requires right-canonical cores (center 1)"))
+    all(size(B,1)==size(B,3)==1 for c in mps.Cores for B in values(c.Blocks)) ||
+        throw(ArgumentError("Nondegenerate sampling requires sector dimensions equal to one"))
+    ids = [Dict(q=>i for (i,q) in enumerate(index.Charges)) for index in mps.LinkIndices]
+    cumulative = Matrix{Y}[]; transitions = Matrix{Int}[]; domains = Vector{S}[]
+    for (j,core) in enumerate(mps.Cores)
+        domain = core.Indices[2].FlatDomain
+        physical_ids = Dict(x=>k for (k,x) in enumerate(domain))
+        weights = zeros(Y,length(domain),length(ids[j]))
+        next_state = zeros(Int,size(weights))
+        for ((left,site,right),B) in core.Blocks
+            state = ids[j][left]
+            for x in domain
+                charge, local_index = core.Indices[2].InvXindex[x]
+                charge == site || continue
+                k = physical_ids[x]
+                weights[k,state] = abs(B[1,local_index,1])
+                next_state[k,state] = ids[j+1][right]
+            end
+        end
+        for state in axes(weights,2)
+            scale = maximum(view(weights,:,state))
+            iszero(scale) && continue  # Unreachable zero-amplitude sector.
+            total = zero(Y)
+            for k in axes(weights,1)
+                total += (weights[k,state]/scale)^2
+                weights[k,state] = total
+            end
+            weights[:,state] ./= total
+        end
+        push!(cumulative,weights); push!(transitions,next_state); push!(domains,copy(domain))
+    end
+    initial = ids[1][first(mps.LinkIndices[1].Charges)]
+    NondegSamplingTable(cumulative,transitions,domains,initial)
+end
+
+function sample_table!(table::NondegSamplingTable, output, first_sample, last_sample, rng)
+    for sample in first_sample:last_sample
+        state = table.initial_state
+        for j in eachindex(table.domains)
+            cdf = table.cumulative[j]
+            # Strict comparison skips zero-probability states even when rand=0.
+            cdf[end,state] > 0 || error("Reached a zero-probability sector")
+            u = rand(rng)
+            k = 1
+            while k < size(cdf,1) && u >= cdf[k,state]; k += 1; end
+            output[j,sample] = table.domains[j][k]
+            state = table.next_state[j][k,state]
+        end
+    end
+    nothing
+end
+
+function sample_nondeg!(mps::U1MPS{S,Y}, output::Matrix{S}, count::Int; backend::Symbol=:table) where {S,Y}
+    count >= 0 || throw(ArgumentError("num_samples must be nonnegative"))
+    size(output,1)==length(mps.Cores) && size(output,2)>=count || throw(DimensionMismatch("Sampling buffer does not match the requested batch"))
+    count == 0 && return nothing
+    backend == :legacy && return sample_nondeg_legacy!(mps,output,count)
+    backend == :table || throw(ArgumentError("Unknown sampling backend: $backend"))
+    sample_table!(nondeg_sampling_table(mps),output,1,count,Random.TaskLocalRNG())
+end
+
+function sample_nondeg_parallel!(mps::U1MPS{S,Y}, output::Matrix{S}, count::Int; backend::Symbol=:table) where {S,Y}
+    count >= 0 || throw(ArgumentError("num_samples must be nonnegative"))
+    size(output,1)==length(mps.Cores) && size(output,2)>=count || throw(DimensionMismatch("Sampling buffer does not match the requested batch"))
+    count == 0 && return nothing
+    backend == :legacy && return sample_nondeg_parallel_legacy!(mps,output,count)
+    backend == :table || throw(ArgumentError("Unknown sampling backend: $backend"))
+    table = nondeg_sampling_table(mps)
+    chunks = min(Threads.nthreads(),count)
+    Threads.@threads for chunk in 1:chunks
+        sample_table!(table,output,fld((chunk-1)*count,chunks)+1,fld(chunk*count,chunks),Random.TaskLocalRNG())
+    end
+    nothing
 end

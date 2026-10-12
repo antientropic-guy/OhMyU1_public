@@ -243,3 +243,59 @@ Large-workload medians were 16.84 s (one thread) and 12.22 s (four threads), wit
 increase is the cost of the position cache. Historical runtime, allocation and
 RSS guards passed without recalibration. Different machine load means the
 observed timing improvement is not an isolated causal estimate of this change.
+
+Fast paths and reference backends (2026-10-12)
+---------------------------------------------
+TrainParams(rate, rank) and TrainParams(rate, rank, cutoff) remain valid. The
+default backend=:fast uses scaled dominant singular triplets for 1xn, nx1 and
+2x2 real blocks; larger blocks still use LAPACK. Choose
+TrainParams(rate, rank; backend=:lapack) to use library SVD for every block.
+orthogonalize!(mps; backend=:lapack) restores the library LQ path. The default
+canonicalizer directly normalizes one-row sectors when both bond degeneracies
+are one; degenerate bonds retain LQ. solve(...; factorization_backend=:lapack)
+selects both library factorization paths without changing SolverParams files.
+At repeated leading singular values, the best rank-one approximation need not
+be unique; tests compare singular values and approximation errors, not signs.
+
+Training target weights are aggregated by (middle charge, left physical value,
+right physical value) once per train call. The merged derivative contribution
+is 2*learning_rate*sum_weight/(left_value*right_value). The two core values are
+read from the already reshaped matrices. No gradient term is dropped. Target
+charges are also computed once and shared by all sweeps. TrainParams floating
+fields have concrete types to avoid dynamic dispatch in arithmetic.
+
+sample_nondeg! and sample_nondeg_parallel! now build integer transition/CDF
+tables for each batch, then draw without charge hashing in the inner loop.
+Tables require right-canonical, nondegenerate cores and are not retained across
+model updates. Pass backend=:legacy to either sampler for the former path.
+The new path supports unequal finite physical domains and zero columns. RNG
+ownership remains task-local. Floating-point regrouping and factorization
+gauges can change exact random trajectories; reproducibility means replaying
+the same implementation and runtime settings, not bitwise equivalence between
+old and new implementations.
+
+Graph-distance batches use task-owned scratch, with no per-point Channel
+operations. All constraint matrices and residual charges use the same general
+vector-based implementation; there is no binary-charge specialization or
+machine-word constraint-count limit. User-provided distance callbacks are preserved.
+
+fast_paths.jl independently checks extreme-scale Float32/Float64 triplets,
+zero and repeated singular values, direct canonicalization, zero rows, complete
+training with both backends, split target weights, exact dense probabilities,
+nonbinary physical domains, signed charges, large constraint counts, and nested
+concurrent calls. Existing finite-difference, strategy,
+support and sampling tests remain enabled. Historical performance thresholds
+have not been relaxed or recalibrated.
+
+Additional warmed BestCost/GDF profiling, independently of the test suite:
+    julia --startup-file=no --project=. --threads=1,1 test/benchmark_assignment.jl
+    julia --startup-file=no --project=. --threads=4,1 test/benchmark_assignment.jl
+Run these sequentially. Each measures three complete 10-iteration solves per
+strategy on assignment n=10 after warm-up. GDF uses weight 0.4; other settings
+match the large regression workload. Optional first argument sets the TOML
+output path. Source hashes, machine details, all timings, cumulative allocation,
+costs and process peak RSS are saved, followed by a separate sampling profile.
+Profile overhead is excluded from the reported timings and RSS measurement.
+See OPTIMIZATION.txt for the measurement history and current follow-up results.
+fixtures/optimization_20261012.json retains the original before/after measurements
+from the revision that still included the subsequently removed binary masks.

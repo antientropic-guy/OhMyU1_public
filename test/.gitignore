@@ -2,4 +2,5 @@ output/
 local_performance_baseline.toml
 !README.txt
 !KNOWN_ISSUES.txt
+!OPTIMIZATION.txt
 local_large_performance_baseline.toml

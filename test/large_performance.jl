@@ -2,7 +2,7 @@
 # using its own RNG; model draws cannot advance the source RNG. The solver
 # requests enough external points to fill its 20,000-candidate pool.
 const LARGE_WORKLOAD = "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"
-function large_benchmark_run(parallel; iterations=10)
+function large_benchmark_run(parallel; iterations=10, strategy="best_cost")
     n=10; rng=MersenneTwister(8101); source_rng=MersenneTwister(8102)
     A=U.assignment_matrix(n); b=ones(Int,2n); c=randn(rng,n*n)
     opt=problem(A,b;cost=x->dot(c,x)); calls=Ref(0)
@@ -17,7 +17,7 @@ function large_benchmark_run(parallel; iterations=10)
     sp=U.SolverParams(NUM_FEASIBLE_SAMPLES=1000,NUM_MPS_SAMPLES=5000,
         NUM_GLOBAL_ITER=iterations,NUM_SWEEP_ITER=2,UTILITY_FRACTION=.05,KEEP_NUM_WORST=0.)
     Random.seed!(8103)
-    stats=U.solve(opt,source!,sp,"best_cost";parallel,print_stats=false)
+    stats=U.solve(opt,source!,sp,strategy;parallel,print_stats=false,mixed_proportion=.4)
     @test opt.A*stats.incub==opt.b
     @test all(x->x in (0,1),stats.incub)
     @test isfinite(stats.c_min) && stats.c_min ≈ opt.cost_function(stats.incub)

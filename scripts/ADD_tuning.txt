@@ -1,0 +1,50 @@
+ASSIGNMENT ADD TRAINING TUNING
+==============================
+From the project root on the Slurm cluster:
+
+    bash scripts/bash/run_ADD_tuning.sh
+
+Four independent array tasks run BestCost, mixed, weighted rank, and best nonzero
+mixed (GDF). Each receives one exclusive c32m384 node, 32 CPUs and all node memory,
+with a 24-hour limit. At most four allocations run concurrently. Each job keeps
+at most four solver instances alive, rather than spawning every experiment at
+once. ADD_WORKERS=2 bash scripts/bash/run_ADD_tuning.sh reduces this limit further.
+Within each strategy job, linear and quadratic objectives run sequentially.
+No inter-job synchronization or shared result files are used. Julia must be in PATH.
+
+Training files only: data/random_vectors/c_<n>_<i>_r=50.jld2 (key c) and
+ data/random_bilinear_forms/q_<n>_<i>_r=7.jld2 (key q), n=12:16, i=1:50.
+The original article screening grids are used for both objective families:
+Mixed Selection and GDF: 0.1, 0.2, 0.3, 0.4.
+Weighted Rank: 0.1, 0.35, 0.5, 0.7.
+The complete grids are recorded in LinearAssignmentReport.ipynb and
+QuadraticAssignmentReport.ipynb; the manuscript tables show only selected winners.
+BestCost is not repeated across weights. Total: 6,000 ADD and 500 BestCost solves.
+Parameters match the original scripts: initial 1,000, MPS 10,000, 20 iterations,
+one sweep, learning rate 0.05, 5 percent elites, no worst retention, no EELS,
+no barrier. The public solver fills its external candidate pool to 20,000.
+Sampling is serial inside each solve; other library operations can use the
+job's Julia threads. BLAS uses one thread to avoid nested BLAS oversubscription.
+
+Outputs: data/assignment_add_tuning_v1/<implementation-hash>/res_<strategy>_<objective>.jld2.
+Each file contains res_dict, solver_params, configuration and diagnostics.
+BestCost layout: res_dict["best_cost"][n][i].
+ADD layout: res_dict[strategy][weight][n][i], using the original strategy strings.
+Diagnostics are indexed by (weight,n,i), with BestCost weight 0.0. They include
+elapsed time, cumulative allocations, GC time, seeds and initial dataset hashes.
+Concurrent solve timings are diagnostics, not isolated performance benchmarks.
+
+Completed instances are checkpointed by one writer per job via temporary-file
+replacement. Repeat the same command to resume after the time limit. A changed
+implementation selects another folder; incompatible inputs/settings are rejected.
+Do not start two copies of the same strategy/objective job in the same output
+folder concurrently. Errors are reported, completed results are retained, and the
+job exits unsuccessfully rather than silently presenting an incomplete experiment.
+
+No training-data generation, test-set evaluation, best-strategy selection, AB
+analysis or ConstrainTNet benchmark is performed. Those are separate later stages.
+For local validation:
+    julia --project=. scripts/run_ADD_tuning.jl --strategy gdf --check
+    julia --project=. --threads=4 scripts/run_ADD_tuning.jl --strategy gdf --smoke --workers 2
+Smoke results have their own folder and use only n=12, i=1 and the two endpoint
+weights: 0.1/0.4 for Mixed Selection/GDF, 0.1/0.7 for Weighted Rank.

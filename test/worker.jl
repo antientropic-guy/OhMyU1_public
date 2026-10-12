@@ -16,7 +16,7 @@ catch err
     showerror(stderr,err,catch_backtrace());println(stderr)
 end
 STAGES["performance_including_jit"]=time()-stage_started
-files="--threaded" in ARGS ? ("sampling.jl","selection.jl") : ("structure.jl","index_lookup.jl","exact_sampling.jl","sampling.jl","gradients.jl","selection.jl")
+files="--threaded" in ARGS ? ("sampling.jl","selection.jl","fast_paths.jl") : ("structure.jl","index_lookup.jl","exact_sampling.jl","sampling.jl","gradients.jl","selection.jl","fast_paths.jl")
 for file in files
     file_started=time()
     try

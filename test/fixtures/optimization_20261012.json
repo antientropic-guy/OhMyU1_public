@@ -1,0 +1,278 @@
+{
+  "date": "2026-10-12",
+  "baseline_commit": "207cf98daf5188fd18caac913ba3358b502abd8f",
+  "baseline_source_sha256": {
+    "deprecated.jl": "b5eac7d6ec9b0e856a95041a2d0320bdc7bbae963459e7ba235785d1e1f2bb58",
+    "diversification.jl": "cf3ef7ff4295e33304c7c2736f11ca1b796ced280458a326d3dde3663bde3e86",
+    "future.jl": "2173ec94cf6a3de8243026f6fdadf7c0b71410fb075f6de37c0aab25b0468a84",
+    "mps_core.jl": "c94cbc6cda5047d2ee74899e08b234a289c90e587e37f930067cc5c09867bb46",
+    "OhMyU1.jl": "0870ce5306c8712453e1d13f1a35c133dce83e6ad8a77edff561667a2752ce05",
+    "partition_locality.jl": "b9760f3256f4b0a9b67f1c03d1c5861121bd525db47d2b839407e6cb01f0e95f",
+    "py_tools.jl": "cde3fd545db0c797afdc2e3e9882e7b1dab106f855ef22db768f904e2d138e00",
+    "set_partitioning.jl": "076e735b6b62418ec951eb1efe1f6be70361d61b3228125f211058beb7d303b4",
+    "solver.jl": "32dd6bb45572c874ddab8d083ec2840980a686f85c9c715c927e56f94fbbd675",
+    "tools.jl": "8c0c2b23f8ff51046d3a96aa6f99d137021ccf87fc105a655c7b327890156928",
+    "train.jl": "f139f131056c6d31e7a5adffdbffff7bbc4fc5fcccd33cc7e8e0faa4f793d56a"
+  },
+  "before": {
+    "1": {
+      "rss": 1250746368,
+      "best_cost": {
+        "bytes": 4506422978.0,
+        "seconds": 16.1576601,
+        "times": [
+          16.6488941,
+          16.1576601,
+          15.5209195
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      },
+      "best nonzero mixed": {
+        "bytes": 4887348301.0,
+        "seconds": 20.4416923,
+        "times": [
+          20.4416923,
+          21.1200858,
+          20.011138
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      }
+    },
+    "4": {
+      "rss": 1145413632,
+      "best_cost": {
+        "bytes": 4554980280.0,
+        "seconds": 14.1690964,
+        "times": [
+          12.5310396,
+          14.1690964,
+          21.1136217
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      },
+      "best nonzero mixed": {
+        "bytes": 4901966841.0,
+        "seconds": 21.7607414,
+        "times": [
+          22.6071696,
+          20.5305154,
+          21.7607414
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      }
+    }
+  },
+  "after": {
+    "1": {
+      "parallel_sampling": false,
+      "threads": 1,
+      "cpu": "Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz",
+      "blas_threads": 1,
+      "julia": "1.12.5",
+      "interactive_threads": 1,
+      "max_rss_bytes": 1252085760,
+      "workload": "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1",
+      "source_sha256": {
+        "tools.jl": "8c0c2b23f8ff51046d3a96aa6f99d137021ccf87fc105a655c7b327890156928",
+        "py_tools.jl": "cde3fd545db0c797afdc2e3e9882e7b1dab106f855ef22db768f904e2d138e00",
+        "set_partitioning.jl": "076e735b6b62418ec951eb1efe1f6be70361d61b3228125f211058beb7d303b4",
+        "OhMyU1.jl": "0870ce5306c8712453e1d13f1a35c133dce83e6ad8a77edff561667a2752ce05",
+        "diversification.jl": "cf3ef7ff4295e33304c7c2736f11ca1b796ced280458a326d3dde3663bde3e86",
+        "solver.jl": "57880b954a1fc8cb619ae0720634281fcd8d3c37c388b9fab3f857dd0750a79f",
+        "mps_core.jl": "f237ef3190a40cd033b438de0fc2135e7cd228de303fdcadf9ab71d0bdde629b",
+        "partition_locality.jl": "b9760f3256f4b0a9b67f1c03d1c5861121bd525db47d2b839407e6cb01f0e95f",
+        "deprecated.jl": "b5eac7d6ec9b0e856a95041a2d0320bdc7bbae963459e7ba235785d1e1f2bb58",
+        "future.jl": "2173ec94cf6a3de8243026f6fdadf7c0b71410fb075f6de37c0aab25b0468a84",
+        "train.jl": "b3b514ea9559d9b54e1d26dac54bdb742c29d67d7057a9014d684e81fe2deaab"
+      },
+      "best nonzero mixed": {
+        "gc_seconds": [
+          1.2051397,
+          1.4441467,
+          1.4120985
+        ],
+        "bytes": 2883486130.0,
+        "seconds": 7.1082903,
+        "times": [
+          5.8416806,
+          7.1082903,
+          7.2705028
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      },
+      "best_cost": {
+        "gc_seconds": [
+          1.2184447,
+          1.1980691,
+          0.7139575
+        ],
+        "bytes": 2564960138.0,
+        "seconds": 5.1542901,
+        "times": [
+          5.1542901,
+          5.1799691,
+          4.4540796
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      }
+    },
+    "4": {
+      "parallel_sampling": true,
+      "threads": 4,
+      "cpu": "Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz",
+      "blas_threads": 1,
+      "julia": "1.12.5",
+      "interactive_threads": 1,
+      "max_rss_bytes": 1280995328,
+      "workload": "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1",
+      "source_sha256": {
+        "tools.jl": "8c0c2b23f8ff51046d3a96aa6f99d137021ccf87fc105a655c7b327890156928",
+        "py_tools.jl": "cde3fd545db0c797afdc2e3e9882e7b1dab106f855ef22db768f904e2d138e00",
+        "set_partitioning.jl": "076e735b6b62418ec951eb1efe1f6be70361d61b3228125f211058beb7d303b4",
+        "OhMyU1.jl": "0870ce5306c8712453e1d13f1a35c133dce83e6ad8a77edff561667a2752ce05",
+        "diversification.jl": "cf3ef7ff4295e33304c7c2736f11ca1b796ced280458a326d3dde3663bde3e86",
+        "solver.jl": "57880b954a1fc8cb619ae0720634281fcd8d3c37c388b9fab3f857dd0750a79f",
+        "mps_core.jl": "f237ef3190a40cd033b438de0fc2135e7cd228de303fdcadf9ab71d0bdde629b",
+        "partition_locality.jl": "b9760f3256f4b0a9b67f1c03d1c5861121bd525db47d2b839407e6cb01f0e95f",
+        "deprecated.jl": "b5eac7d6ec9b0e856a95041a2d0320bdc7bbae963459e7ba235785d1e1f2bb58",
+        "future.jl": "2173ec94cf6a3de8243026f6fdadf7c0b71410fb075f6de37c0aab25b0468a84",
+        "train.jl": "b3b514ea9559d9b54e1d26dac54bdb742c29d67d7057a9014d684e81fe2deaab"
+      },
+      "best nonzero mixed": {
+        "gc_seconds": [
+          0.9388688,
+          0.7382153,
+          0.9605124
+        ],
+        "bytes": 2885776704.0,
+        "seconds": 6.9442418,
+        "times": [
+          6.9442418,
+          6.572228,
+          7.1828038
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      },
+      "best_cost": {
+        "gc_seconds": [
+          1.0711191,
+          0.9814807,
+          0.9037371
+        ],
+        "bytes": 2603900012.0,
+        "seconds": 6.552395,
+        "times": [
+          6.552395,
+          6.6585641,
+          6.4864978
+        ],
+        "costs": [
+          -13.941870924519275,
+          -13.941870924519275,
+          -13.941870924519275
+        ]
+      }
+    }
+  },
+  "independent_large_regression_run": {
+    "1": {
+      "gc_seconds": 1.5125029,
+      "times": [
+        6.9422764,
+        6.7017486,
+        6.4853195
+      ],
+      "parallel_sampling": false,
+      "allocated_bytes": 2564963114.0,
+      "warmup_seconds": 11.359999895095825,
+      "initial_costs": [
+        -11.353635218130908,
+        -11.353635218130908,
+        -11.353635218130908
+      ],
+      "seconds": 6.7017486,
+      "allocations": [
+        2564963114,
+        2564964554,
+        2564962042
+      ],
+      "final_costs": [
+        -13.941870924519275,
+        -13.941870924519275,
+        -13.941870924519275
+      ],
+      "passed": true,
+      "threads": 1,
+      "worker_seconds": 59.03999996185303,
+      "interactive_threads": 1,
+      "load_seconds": 10.772000074386597,
+      "max_rss_bytes": 1383280640,
+      "workload": "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"
+    },
+    "4": {
+      "gc_seconds": 0.8388484,
+      "times": [
+        4.9140355,
+        5.2343671,
+        4.9492184
+      ],
+      "parallel_sampling": true,
+      "allocated_bytes": 2603891244.0,
+      "warmup_seconds": 8.32099986076355,
+      "initial_costs": [
+        -11.353635218130908,
+        -11.353635218130908,
+        -11.353635218130908
+      ],
+      "seconds": 4.9492184,
+      "allocations": [
+        2603890044,
+        2603892348,
+        2603891244
+      ],
+      "final_costs": [
+        -13.941870924519275,
+        -13.941870924519275,
+        -13.941870924519275
+      ],
+      "passed": true,
+      "threads": 4,
+      "worker_seconds": 45.366000175476074,
+      "interactive_threads": 1,
+      "load_seconds": 9.765000104904175,
+      "max_rss_bytes": 1203642368,
+      "workload": "assignment10_initial1000_samples5000_iterations10_sweeps2_seed8101_v1"
+    }
+  },
+  "full_suite_assertions": 4796,
+  "full_suite_passed": true,
+  "full_suite_wall_seconds": 301.0
+}
