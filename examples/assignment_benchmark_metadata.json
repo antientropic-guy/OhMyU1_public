@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-12",
+  "cpu": "Intel Core i5-10210U",
+  "os": "Windows",
+  "julia_version": "1.12.5",
+  "julia_default_threads": 1,
+  "julia_interactive_threads": 0,
+  "blas_threads": 1,
+  "ohmyu1_commit": "f69c0d0b20643da23b6d65069d020b607dbf5375",
+  "constraintnet_commit": "77d8c26357520c1869252745ec302da22f21793d",
+  "constraintnet_algorithm_sources_modified": false,
+  "constraintnet_vendored_source_adjustment": "ITensors.jl/src/qn/qn.jl: const maxQNs = 20 -> 21; one spare slot needed for comparison with QN() at 20 constraints",
+  "constraintnet_environment": "constraintnet_benchmark_environment/",
+  "seed": 20260923,
+  "per_problem_seed": "seed + 10000*n",
+  "n": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "training_samples": 400,
+  "post_training_samples": 400,
+  "learning_rate": 0.05,
+  "bond_degeneracy": 1,
+  "sweeps": 1,
+  "repetitions": 3,
+  "metric": "median training seconds + median sequential sampling seconds",
+  "training_updates": {
+    "OhMyU1": "two-site projected",
+    "ConstrainTNet": "one-site"
+  },
+  "initial_state": "exact normalized uniform feasible assignment state",
+  "excluded": [
+    "JIT warmup",
+    "initial MPS construction and preparation",
+    "deepcopy",
+    "explicit pre-timing GC"
+  ],
+  "validation": [
+    "input checksums agree",
+    "maximum bond supports agree",
+    "initial unnormalized norm squared equals n! within 1e-10",
+    "final measured batches satisfy Ax=b"
+  ],
+  "limitations": [
+    "Different update routines: equal sweeps do not imply equal learning progress.",
+    "Three repetitions on one local CPU; no confidence interval or general hardware scaling claim.",
+    "Earlier locally patched ConstrainTNet measurements are superseded, not a controlled before/after comparison."
+  ],
+  "sha256": {
+    "scripts/benchmark_assignment.jl": "774ae45569ffce86762059f24a151a8ea14c335a84f0b4cfd0a209be4fef69fe",
+    "examples/constraintnet_benchmark_environment/Project.toml": "cb5024b9a9fbe6668f1d7eb7364191a38ae951485f40d4f1382e7fcc9e7735d4",
+    "examples/constraintnet_benchmark_environment/Manifest.toml": "0ae84089d8db2a1f51ef9ba84129f25c0d2b459e20f9740e85e7e52b7c880cd2"
+  },
+  "csv_sha256": "4a33e2189c8dc359b079bcb0f9e1f1bdd73c3a27ac0868464f6220d29945f69b"
+}

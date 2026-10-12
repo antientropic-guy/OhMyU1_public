@@ -19,6 +19,10 @@ Run from anywhere:
 
     julia --project=. scripts/benchmark_assignment.jl
 
+Set CONSTRAINTNET_BENCHMARK_PROJECT to a clean upstream checkout when the local
+ConstrainTNet directory contains experimental patches. Child processes use one
+default thread, no interactive pool (for upstream thread-ID indexing), and BLAS=1.
+
 Useful quick check:
 
     julia --project=. scripts/benchmark_assignment.jl --n=3 --samples=16 --repeats=1
@@ -29,8 +33,11 @@ using Printf
 using Random
 using Statistics
 
+BLAS.set_num_threads(1)
+
 const REPO_ROOT = normpath(joinpath(@__DIR__, ".."))
-const CT_ROOT = joinpath(REPO_ROOT, "ConstrainTNet.jl")
+const CT_ROOT = abspath(get(ENV, "CONSTRAINTNET_BENCHMARK_PROJECT",
+    joinpath(REPO_ROOT, "ConstrainTNet.jl")))
 const RESULT_PREFIX = "BENCH_RESULT|"
 const PROCESS_BACKEND = let
     argument = findfirst(arg -> startswith(arg, "--backend="), ARGS)
@@ -320,7 +327,7 @@ end
 function backend_command(project, script, backend, ns, num_samples, repeats, seed)
     julia = Base.julia_cmd()
     n_arg = join(ns, ',')
-    return `$julia --startup-file=no --project=$project $script --backend=$backend --n=$n_arg --samples=$num_samples --repeats=$repeats --seed=$seed`
+    return `$julia --startup-file=no --threads=1,0 --project=$project $script --backend=$backend --n=$n_arg --samples=$num_samples --repeats=$repeats --seed=$seed`
 end
 
 function write_csv(path, rows)
@@ -395,6 +402,7 @@ function main(args)
     for n in ns
         matching = filter(row -> parse(Int, row["n"]) == n, rows)
         length(unique(row["checksum"] for row in matching)) == 1 || error("backend inputs differ for n=$n")
+        length(unique(row["max_support"] for row in matching)) == 1 || error("backend supports differ for n=$n")
     end
     write_csv(output_path, rows)
     print_summary(rows)

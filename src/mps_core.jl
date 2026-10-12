@@ -139,7 +139,6 @@ function compute_indices(link_charges::Array{T, 3},
             site_i = SiteIndex{T}(site_i_index_charges, [[x_domains[i][j]] for j in 1:length(x_domains[i])], x_domains[i], A_vec, inv_x_dict)
         else
             # Case with 0 column of the matrix A:
-            println("Zero column")
             for (j, x) in enumerate(x_domains[i])
                 inv_x_dict[x] = (zero_charge, j)
             end

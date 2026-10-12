@@ -36,7 +36,8 @@ function main(args)
         titlefont=11,
     )
 
-    y_ticks = Any[0.1, 1, 10, 100]
+    # Preserve the original styling while showing the faster small instances.
+    y_ticks = Any[0.001, 0.01, 0.1, 1, 10, 100]
     plot!(figure, ns .^ 2, t_ref,
         marker=(:circle, 4),
         color=palette(:default)[3],
@@ -44,7 +45,7 @@ function main(args)
         yticks=(y_ticks, string.(y_ticks)),
         xlabel="# Variables",
         ylabel="Wall time, s",
-        ylims=(0.005, 400),
+        ylims=(0.001, 400),
         xlims=(9, 110),
     )
 
@@ -57,7 +58,7 @@ function main(args)
     end
 
     plot!(figure, [9, 110], [y1, y1], color=:black, lw=1, label=false)
-    plot!(figure, [110, 110], [0.005, 400], color=:black, lw=1, label=false)
+    plot!(figure, [110, 110], [0.001, 400], color=:black, lw=1, label=false)
 
     mkpath(dirname(output))
     savefig(figure, output)
