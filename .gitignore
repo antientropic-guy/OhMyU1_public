@@ -88,3 +88,22 @@ AGENTS.md
 !/scripts/bash/run_ADD_tuning.sh
 !/scripts/ADD_tuning.txt
 /data/assignment_add_tuning_v1/smoke_*/
+
+# Archived local SA pilots (retained on disk, not part of the cluster benchmark).
+/scripts/sa/
+/examples/SA_*.ipynb
+/examples/sa_*/
+/examples/assignment_sa_pilot.csv
+/data/assignment_sa_v1/
+/data/sa_learning_v1/
+/data/sa_learning_quadratic_v1/
+/data/sa_cooling_v1/
+/data/sa_persistent_v1/
+/data/sa_restart_v1/
+
+# New isolated, reproducible cluster experiment; retain its inputs and scripts.
+!/scripts/bash/run_SA_cluster.sh
+/data/sa_cluster_v1/results/
+/data/sa_cluster_v1/smoke/
+/data/sa_cluster_v1/**/*.pending
+/scripts/sa_cluster/smoke/

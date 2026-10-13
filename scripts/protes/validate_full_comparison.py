@@ -9,7 +9,7 @@ def C(n,k):return math.comb(n,k) if 0<=k<=n else 0
 def rank(n,k):
     if k in (0,n*n):return 1
     r,t=divmod(k,n);return C(n,r)-C(t,r-n+t)+C(n,r+1)-C(n-t,r+1)
-for r in s['full_u1']:
+for r in s['full_u1']+s.get('full_u1_table',[]):
     n=int(r['n'])
     blocks=sum(C(n-1,a)+C(n,a)-C(b+1,a-n+b+1)+C(n,a+1)-C(n-b,a+1) for a in range(n) for b in range(n))
     assert int(r['numeric_bytes'])==8*blocks
@@ -23,7 +23,7 @@ for record in s['full_protes']:
     for r in record['trials']:
         assert r['feasible']==r['samples']
         assert r['novel_unique']<=math.factorial(n)-lookup[n,'linear',0]['initial_unique']
-for r in s['data_u1']:
+for r in s['data_u1']+s.get('data_u1_table',[]):
     ref=lookup[int(r['n']),r['objective'],int(r['repetition'])]
     assert all(r[key]==ref[key] for key in ['initial_sha256','objective_sha256'])
     assert math.isclose(float(r['initial_c_min']),ref['initial_c_min'],rel_tol=1e-12,abs_tol=1e-9)

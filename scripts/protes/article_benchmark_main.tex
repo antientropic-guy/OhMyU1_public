@@ -22,12 +22,16 @@ $472$ GiB; this last number is a storage calculation, not an allocation.
 
 For sampling we construct the complete indicator in both libraries and
 use the same uniform distribution over assignments, with no training.
-All observed samples are feasible. At $n=8$ and $n=10$, OhMyU1 generates
-approximately $2.1\cdot10^4$ and $7.8\cdot10^3$ samples per second,
-respectively, versus $2.3\cdot10^3$ and $1.1\cdot10^2$ for the more
+All observed samples are feasible. At $n=8$ and $n=10$, OhMyU1 with the legacy sampler generates
+approximately $2.0\cdot10^{4}$ and $7.3\cdot10^{3}$ samples per second,
+respectively, versus $2.3\cdot10^{3}$ and $1.1\cdot10^{2}$ for the more
 memory-efficient \texttt{protes\_general}. The resulting speedups are
-approximately $9\times$ and $71\times$; small instances do not exhibit
-universal superiority. These measurements compare particular dense and
+approximately $8.7\times$ and $66.9\times$.
+Small instances do not exhibit universal superiority.
+% BEGIN PROTES TABLE RATES
+The table sampler yields approximately 11877 and 1896 samples per second at these sizes; its per-call preparation is included. Both variants are shown.
+% END PROTES TABLE RATES
+ These measurements compare particular dense and
 block-sparse implementations, rather than establishing a lower bound on
 all possible PROTES implementations.
 
@@ -52,7 +56,7 @@ one second of timed generation in batches of 100. Counts include repeated
 draws. Construction, canonicalization, compilation, and diagnostic bookkeeping
 are excluded. Complete dense models are actually constructed only for
 $4\le n\le10$; complete $U(1)$ models are constructed through $n=16$.
-The distributions and binary variable order are identical.}
+The distributions and binary variable order are identical. Both OhMyU1 sampling backends are shown.}
 \label{fig:protes_exact}
 \end{figure*}
 
@@ -71,10 +75,15 @@ Adam steps, and initial-data passes (\cref{tab:protes_settings}).
 points absent from the initial dataset, rather than repeated draws.
 Longer initial fitting improves PROTES: at $n=8$, \texttt{fit20} finds
 12--25 new points for linear objectives and 17--25 for quadratic objectives
-in 50 seconds, while EELS finds 5157--6697 and 5240--7043, respectively.
+in 50 seconds, while EELS with the legacy sampler finds 6880--7260 and 9341--10320, respectively.
 Thus, inability to generate any feasible point is not a robust conclusion;
 the observed limitation is rare feasible generation under this data-based
 initialization and update rule. New points need not improve the objective.
+% BEGIN PROTES TABLE NOVELTY
+With the table sampler the corresponding EELS ranges are 6880--7286 and 9353--10323.
+% END PROTES TABLE NOVELTY
+
+
 
 \begin{figure*}[t]
 \centering\includegraphics[width=\textwidth]{pictures/benchmark_protes_u1_5s_julia.pdf}
@@ -82,7 +91,7 @@ initialization and update rule. New points need not improve the objective.
 linear (left) and quadratic (right) objectives, versus assignment size $n$.
 Each point is one matched diagnostic instance/seed; all methods receive the
 same 400 initial observations. PROTES settings are in
-\cref{tab:protes_settings}; $U(1)$-EELS uses the fixed settings above.
+\cref{tab:protes_settings}; $U(1)$-EELS uses the fixed settings above, with both sampling backends shown.
 Initialization, fitting, sampling, and scoring count toward the budget.
 At $n=4$ the initial data already cover all 24 solutions, so zero novelty is
 unavoidable. Both panels share the ordinate transformation $\log_{10}(1+z)$,
@@ -98,7 +107,7 @@ No uncertainty estimate can be obtained from this single-seed screen.}
 Dots are individual counts of new distinct feasible points; orange bars
 and red diamonds show the arithmetic mean and median of the original counts.
 Both panels use the same $\log_{10}(1+z)$ ordinate and limits. All five PROTES
-configurations are reported, not only the best observed configuration.
+configurations and both EELS sampling backends are reported, not only the best observed configuration.
 These are trained, time-limited runs, unlike the untrained full-indicator
 sampling experiment in \cref{fig:protes_exact}.}
 \label{fig:protes_data_long}

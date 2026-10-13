@@ -29,7 +29,10 @@ end
 
 function benchmark_full_u1()
     root=normpath(joinpath(@__DIR__,"..",".."))
-    out=joinpath(root,"data","protes_comparison","scaling","full_u1.csv")
+    backend=length(ARGS)>=3 ? Symbol(ARGS[3]) : :legacy
+    backend in (:legacy,:table) || error("Unknown sampling backend")
+    suffix=backend==:legacy ? "" : "_table"
+    out=joinpath(root,"data","protes_comparison","scaling","full_u1$(suffix).csv")
     minimum_n=isempty(ARGS) ? 4 : parse(Int,ARGS[1])
     cached_sizes=Dict{Int,Int}()
     if length(ARGS)>=2
@@ -49,7 +52,7 @@ function benchmark_full_u1()
             t=time_ns();support=canonical_full!(mps,n);canonical=(time_ns()-t)/1e9
             GC.gc() # release size-traversal and canonicalization temporary objects before timing
             samples=zeros(Int,n*n,100)
-            sample_nondeg!(mps,samples,100) # compilation and warmup excluded
+            sample_nondeg!(mps,samples,100; backend) # compilation and warmup excluded
             input=joinpath(root,"data","protes_comparison","scaling","paired_inputs","linear_$(n)_0.i32")
             initial=Int.(reshape(reinterpret(Int32,read(input)),n*n,400))
             initial_set=Set(Tuple(x) for x in eachcol(initial))
@@ -57,7 +60,7 @@ function benchmark_full_u1()
                 Random.seed!(20261008+n*1000+rep)
                 elapsed=0.0;batches=0;seen=Set{Tuple}();feasible=0
                 while elapsed<1.0
-                    t=time_ns(); sample_nondeg!(mps,samples,100); elapsed+=(time_ns()-t)/1e9
+                    t=time_ns(); sample_nondeg!(mps,samples,100; backend); elapsed+=(time_ns()-t)/1e9
                     # Diagnostic bookkeeping excluded symmetrically in both samplers.
                     all(mps.A*samples .== 1) || error("Infeasible sample")
                     feasible+=100;union!(seen,(Tuple(x) for x in eachcol(samples)));batches+=1

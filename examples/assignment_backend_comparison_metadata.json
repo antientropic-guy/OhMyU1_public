@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-12",
+  "sampling_backends": [
+    "legacy",
+    "table"
+  ],
+  "u1_cpu_affinity": [
+    0
+  ],
+  "julia_threads": 1,
+  "blas_threads": 1,
+  "constraintnet_results_reused": true,
+  "seed": 20260923,
+  "training_samples": 400,
+  "sampling_batch": 400,
+  "repetitions": 3,
+  "commit": "e23712df633c1641a014bb985cd5e9df0da11d51",
+  "library_sha256": {
+    "deprecated.jl": "b5eac7d6ec9b0e856a95041a2d0320bdc7bbae963459e7ba235785d1e1f2bb58",
+    "diversification.jl": "cf3ef7ff4295e33304c7c2736f11ca1b796ced280458a326d3dde3663bde3e86",
+    "future.jl": "2173ec94cf6a3de8243026f6fdadf7c0b71410fb075f6de37c0aab25b0468a84",
+    "mps_core.jl": "90f5617a8bc2292a98e8971615da21c98c0f1fbab9d14508f2a2b1e1895ad2bb",
+    "OhMyU1.jl": "0870ce5306c8712453e1d13f1a35c133dce83e6ad8a77edff561667a2752ce05",
+    "partition_locality.jl": "b9760f3256f4b0a9b67f1c03d1c5861121bd525db47d2b839407e6cb01f0e95f",
+    "py_tools.jl": "cde3fd545db0c797afdc2e3e9882e7b1dab106f855ef22db768f904e2d138e00",
+    "set_partitioning.jl": "076e735b6b62418ec951eb1efe1f6be70361d61b3228125f211058beb7d303b4",
+    "solver.jl": "e3b5aadc2fbf3195ba4ded95b5f9763a5e5cd906acb21cc448b71db565a1c0f6",
+    "tools.jl": "8c0c2b23f8ff51046d3a96aa6f99d137021ccf87fc105a655c7b327890156928",
+    "train.jl": "b3b514ea9559d9b54e1d26dac54bdb742c29d67d7057a9014d684e81fe2deaab"
+  },
+  "note": "New U1 rows use the pinned one-CPU runner. Historical ConstrainTNet rows and environment are retained from assignment_benchmark_metadata.json. Training algorithm is unchanged between sampler variants."
+}

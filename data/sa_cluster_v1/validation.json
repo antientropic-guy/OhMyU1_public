@@ -1,0 +1,15 @@
+{
+  "tests": {
+    "toy_structures_and_objectives": 1111,
+    "frozen_inputs": 561,
+    "synthetic_collection": 8,
+    "mocked_dispatch_resume": 5
+  },
+  "all_passed": true,
+  "cluster_jobs_submitted": 0,
+  "production_comparisons_run_locally": 0,
+  "input_files": 160,
+  "input_bytes": 47332070,
+  "manifest_sha256": "2f85750d2e16489f3c410522b7ec9829e7198233042e83367ae9481a1db549f1",
+  "notes": "Only input preparation, toy functional tests and mock optimizer dispatch were executed. Full cluster comparisons are not started."
+}

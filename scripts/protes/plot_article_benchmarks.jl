@@ -30,7 +30,7 @@ plot!(p,Int.(mem[:,1]),Float64.(mem[:,2])./2^20;label="U(1): measured object inc
 save(p,"benchmark_protes_memory_julia")
 speed=readtable("speed.csv")
 p=plot(;xlabel="Assignment size n",ylabel="Samples per second",yscale=:log10,xticks=4:2:16,size=(500,360),legend=:topright)
-for (j,(method,label)) in enumerate([("U1","U(1)"),("fast","PROTES: uniform dense rank"),("general","PROTES general")])
+for (j,(method,label)) in enumerate([("U1","U(1): legacy"),("fast","PROTES: uniform dense rank"),("general","PROTES general"),("U1 table","U(1): table")])
     rows=speed[speed[:,1].==method,:];sizes=sort(unique(Int.(rows[:,2])))
     med=[median(Float64.(rows[rows[:,2].==n,4])) for n in sizes]
     low=[minimum(Float64.(rows[rows[:,2].==n,4])) for n in sizes]
@@ -40,18 +40,22 @@ end
 save(p,"benchmark_protes_sampling_julia")
 data=readtable("novelty.csv")
 names=["default","rank20","slow10","batch400","fit20","U1 EELS"]
-ticks=[0,1,10,100,1000,10000];ytransform(x)=log10(1+x)
+any(data[:,1].=="U1 EELS table") && push!(names,"U1 EELS table")
+ticks=[0,1,10,100,1000,10000,100000];ytransform(x)=log10(1+x)
 for budget in [5,50]
     panels=[]
+    # Shared limits across objectives, expanded only if refreshed counts need it.
+    upper=max(4.15,ytransform(maximum(Float64.(data[data[:,5].==budget,6])))+0.12)
+    visible_ticks=filter(x->ytransform(x)<=upper,ticks)
     for obj in ["linear","quadratic"]
-        p=plot(;title=uppercasefirst(obj),ylabel="New distinct feasible points",yticks=(ytransform.(ticks),string.(ticks)),
-               ylims=(-0.06,4.15),legend=budget==5 ? :outerbottom : :topleft,legend_columns=budget==5 ? 3 : 1,
+        p=plot(;title=uppercasefirst(obj),ylabel="New distinct feasible points",yticks=(ytransform.(visible_ticks),string.(visible_ticks)),
+               ylims=(-0.06,upper),legend=budget==5 ? :outerbottom : :topleft,legend_columns=budget==5 ? 3 : 1,
                bottom_margin=7Plots.mm,left_margin=4Plots.mm)
         for (j,name) in enumerate(names)
             rows=data[(data[:,1].==name).&(data[:,2].==obj).&(data[:,5].==budget),:]
             if budget==5
                 rows=rows[sortperm(Int.(rows[:,3])),:]
-                plot!(p,Int.(rows[:,3]),ytransform.(Float64.(rows[:,6]));label=name,color=colors[j],marker=:circle)
+                plot!(p,Int.(rows[:,3]),ytransform.(Float64.(rows[:,6]));label=name=="U1 EELS" ? "U1 EELS legacy" : name,color=colors[j],marker=:circle)
             else
                 vals=Float64.(rows[:,6]);x=j .+ collect(range(-0.13,0.13,length=length(vals)))
                 scatter!(p,x,ytransform.(vals);label=false,color=colors[j],markerstrokewidth=0)
@@ -59,7 +63,8 @@ for budget in [5,50]
                 scatter!(p,[j],[ytransform(median(vals))];color=:red,marker=:diamond,markersize=4,label=j==1 ? "Group median" : false)
             end
         end
-        budget==5 ? plot!(p;title=uppercasefirst(obj)*" (assignment size n)",xticks=4:10,xlims=(3.8,10.2)) : plot!(p;xticks=(1:6,names),xrotation=25,xlims=(.6,6.4))
+        labels=replace(names,"U1 EELS"=>"U1 EELS legacy")
+        budget==5 ? plot!(p;title=uppercasefirst(obj)*" (assignment size n)",xticks=4:10,xlims=(3.8,10.2)) : plot!(p;xticks=(1:length(names),labels),xrotation=25,xlims=(.6,length(names)+.4))
         push!(panels,p)
     end
     save(plot(panels...;layout=(1,2),size=(1100,440)),"benchmark_protes_u1_$(budget)s_julia")

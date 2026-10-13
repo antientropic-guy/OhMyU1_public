@@ -191,7 +191,7 @@ function exact_assignment_mps_ohmy(A, b)
     return mps, max_charges
 end
 
-function run_ohmy(ns, num_samples, repeats, seed)
+function run_ohmy(ns, num_samples, repeats, seed; sampling_backend=:table)
     for n in ns
         A = assignment_matrix(n)
         b = ones(Int, 2n)
@@ -215,8 +215,8 @@ function run_ohmy(ns, num_samples, repeats, seed)
         warm = deepcopy(initial_mps)
         train_nondeg!(warm, 1, training, probabilities, train_params)
         warm_buffer = zeros(Int, n^2, min(num_samples, 2))
-        sample_nondeg!(warm, warm_buffer, size(warm_buffer, 2))
-        sample_nondeg_parallel!(warm, warm_buffer, size(warm_buffer, 2))
+        sample_nondeg!(warm, warm_buffer, size(warm_buffer, 2); backend=sampling_backend)
+        sample_nondeg_parallel!(warm, warm_buffer, size(warm_buffer, 2); backend=sampling_backend)
 
         train_s = median_elapsed(repeats, _ -> deepcopy(initial_mps)) do mps, repetition
             Random.seed!(seed + repetition)
@@ -228,18 +228,18 @@ function run_ohmy(ns, num_samples, repeats, seed)
         serial_buffer = zeros(Int, n^2, num_samples)
         sample_serial_s = median_elapsed(repeats, _ -> deepcopy(trained)) do mps, repetition
             Random.seed!(seed + repetition)
-            sample_nondeg!(mps, serial_buffer, num_samples)
+            sample_nondeg!(mps, serial_buffer, num_samples; backend=sampling_backend)
         end
         all(A * serial_buffer .== b) || error("OhMyU1 produced an infeasible sample for n=$n")
 
         parallel_buffer = similar(serial_buffer)
         sample_native_s = median_elapsed(repeats, _ -> deepcopy(trained)) do mps, repetition
             Random.seed!(seed + repetition)
-            sample_nondeg_parallel!(mps, parallel_buffer, num_samples)
+            sample_nondeg_parallel!(mps, parallel_buffer, num_samples; backend=sampling_backend)
         end
         all(A * parallel_buffer .== b) || error("OhMyU1 produced an infeasible parallel sample for n=$n")
 
-        result_line((backend="OhMyU1", n=n, variables=n^2, constraints=2n,
+        result_line((backend="OhMyU1", sampling_backend=string(sampling_backend), n=n, variables=n^2, constraints=2n,
             samples=num_samples, sweeps=1, repeats=repeats, threads=Threads.nthreads(),
             checksum=input_checksum(Q, training), construction_s=construction_s,
             norm2=norm2, norm_relerr=norm_relerr, max_support=max_support,
@@ -300,7 +300,7 @@ function run_constraintnet(ns, num_samples, repeats, seed)
         end
         all(A * last_samples .== b) || error("ConstrainTNet produced an infeasible sample for n=$n")
 
-        result_line((backend="ConstrainTNet", n=n, variables=n^2, constraints=2n,
+        result_line((backend="ConstrainTNet", sampling_backend="upstream", n=n, variables=n^2, constraints=2n,
             samples=num_samples, sweeps=1, repeats=repeats, threads=Threads.nthreads(),
             checksum=input_checksum(Q, training_columns), construction_s=construction_s,
             norm2=norm2, norm_relerr=norm_relerr, max_support=max_support,
@@ -324,14 +324,14 @@ function parse_result(output::String)
     return rows
 end
 
-function backend_command(project, script, backend, ns, num_samples, repeats, seed)
+function backend_command(project, script, backend, ns, num_samples, repeats, seed, sampling_backend)
     julia = Base.julia_cmd()
     n_arg = join(ns, ',')
-    return `$julia --startup-file=no --threads=1,0 --project=$project $script --backend=$backend --n=$n_arg --samples=$num_samples --repeats=$repeats --seed=$seed`
+    return `$julia --startup-file=no --threads=1,0 --project=$project $script --backend=$backend --sampling-backend=$sampling_backend --n=$n_arg --samples=$num_samples --repeats=$repeats --seed=$seed`
 end
 
 function write_csv(path, rows)
-    columns = ["backend", "n", "variables", "constraints", "samples", "sweeps", "repeats",
+    columns = ["backend", "sampling_backend", "n", "variables", "constraints", "samples", "sweeps", "repeats",
         "threads", "checksum", "construction_s", "norm2", "norm_relerr", "max_support",
         "train_s", "sample_serial_s", "sample_native_s", "balanced_serial_s", "balanced_native_s"]
     open(path, "w") do io
@@ -365,13 +365,15 @@ function main(args)
     repeats = parse(Int, get(opts, "repeats", "3"))
     seed = parse(Int, get(opts, "seed", "20260923"))
     backend = get(opts, "backend", "driver")
+    sampling_backend=Symbol(get(opts,"sampling-backend","table"))
+    sampling_backend in (:table,:legacy) || error("Unknown sampling backend")
 
     all(>(1), ns) || error("all n values must exceed 1")
     num_samples > 0 || error("--samples must be positive")
     repeats > 0 || error("--repeats must be positive")
 
     if backend == "ohmy"
-        run_ohmy(ns, num_samples, repeats, seed)
+        run_ohmy(ns, num_samples, repeats, seed;sampling_backend)
         return
     elseif backend == "constraintnet"
         run_constraintnet(ns, num_samples, repeats, seed)
@@ -384,7 +386,7 @@ function main(args)
     script = abspath(@__FILE__)
     rows = Vector{Dict{String,String}}()
     for (name, project) in (("ohmy", REPO_ROOT), ("constraintnet", CT_ROOT))
-        command = backend_command(project, script, name, ns, num_samples, repeats, seed)
+        command = backend_command(project, script, name, ns, num_samples, repeats, seed, sampling_backend)
         println("Running $name backend with project $project")
         # Julia 1.12/Windows cannot currently attach an IOBuffer (or the devnull
         # used by `read(command, String)`) to this child process reliably. A

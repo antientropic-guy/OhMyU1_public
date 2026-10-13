@@ -1,5 +1,6 @@
 """Save compact measured results and extend the existing actual-memory table."""
-import csv,hashlib,json,math
+import csv,hashlib,json,math,subprocess
+from datetime import date
 from pathlib import Path
 root=Path(__file__).resolve().parents[2];out=root/'data/protes_comparison/scaling'
 def rows(path):
@@ -42,5 +43,23 @@ scripts=['assignment_memory.jl','benchmark_full_u1.jl','benchmark_full_protes.py
 snapshot=dict(hardware=json.loads((out/'hardware.json').read_text()),
               full_u1=u1,full_u1_initial_memory_audit=memory_audit,full_protes=dense,data_u1=data,
               source_sha256={name:hashlib.sha256((root/'scripts/protes'/name).read_bytes()).hexdigest() for name in scripts})
+if (out/'data_u1_long_table.csv').exists():
+    snapshot['full_u1_table']=rows(out/'full_u1_table.csv')
+    snapshot['data_u1_table']=rows(out/'data_u1_short_table.csv')+rows(out/'data_u1_long_table.csv')
+    assert len(snapshot['full_u1_table'])==39 and len(snapshot['data_u1_table'])==20
+    for r in snapshot['full_u1_table']: assert r['samples']==r['feasible']
+    for r in snapshot['data_u1_table']: assert r['generated']==r['feasible']
+    snapshot['backend_comparison_note']='Full table timings are the archived October 12 repeat (after releasing the memory audit); table EELS runs were measured separately with identical inputs and budgets. Legacy measurements are retained. Sampler code is unchanged.'
+snapshot['u1_refresh'] = dict(
+    date=date.today().isoformat(),
+    commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),
+    library_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest()
+                    for p in sorted((root/'src').glob('*.jl'))},
+    protes_results_reused=True,
+    sampling_backend='legacy',
+    additional_sampling_backends=['table'] if snapshot.get('data_u1_table') else [],
+    memory_audit_sampling_backend=json.loads((out/'full_u1_initial.metadata.json').read_text())['sampling_backend'] if (out/'full_u1_initial.metadata.json').exists() else 'unrecorded',
+    memory_audit_note='Only object sizes are taken from the separate audit; its sampling timings are not used in figures or speed comparisons.',
+    protocol='Unchanged inputs, seeds, CPU affinity, sample batches and time budgets; U1 memory remeasured; legacy and any additional backend records are stored separately.')
 (root/'examples/protes_full_comparison_results.json').write_text(json.dumps(snapshot,indent=2),encoding='utf-8')
 print('Saved full models, all 20 matched U1 trials and memory through n=16.')

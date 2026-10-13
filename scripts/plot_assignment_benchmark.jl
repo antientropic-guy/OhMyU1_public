@@ -13,19 +13,18 @@ function read_simple_csv(path)
 end
 
 function main(args)
-    input = isempty(args) ? joinpath(REPO_ROOT, "examples", "assignment_benchmark.csv") : abspath(args[1])
+    input = isempty(args) ? joinpath(REPO_ROOT, "examples", "assignment_backend_comparison.csv") : abspath(args[1])
     output = length(args) < 2 ?
         joinpath(REPO_ROOT, "examples", "pictures", "LibsComparison_fair.pdf") : abspath(args[2])
 
     rows = read_simple_csv(input)
     ohmy = sort(filter(row -> row["backend"] == "OhMyU1", rows); by=row -> parse(Int, row["n"]))
     constraintnet = sort(filter(row -> row["backend"] == "ConstrainTNet", rows); by=row -> parse(Int, row["n"]))
-    length(ohmy) == length(constraintnet) || error("backend result counts differ")
+    variants=sort(unique(get(row,"sampling_backend","table") for row in ohmy))
 
-    ns = parse.(Int, getindex.(ohmy, "n"))
+    ns = sort(unique(parse.(Int, getindex.(ohmy, "n"))))
     ns == parse.(Int, getindex.(constraintnet, "n")) || error("backend n grids differ")
     t_arr = parse.(Float64, getindex.(constraintnet, "balanced_serial_s"))
-    t_ref = parse.(Float64, getindex.(ohmy, "balanced_serial_s"))
 
     figure = plot(ns .^ 2, t_arr,
         marker=(:diamond, 8),
@@ -38,16 +37,22 @@ function main(args)
 
     # Preserve the original styling while showing the faster small instances.
     y_ticks = Any[0.001, 0.01, 0.1, 1, 10, 100]
-    plot!(figure, ns .^ 2, t_ref,
+    for (i,variant) in enumerate(variants)
+        subset=filter(row->get(row,"sampling_backend","table")==variant,ohmy)
+        length(subset)==length(ns) || error("Incomplete backend grid")
+        t_ref=parse.(Float64,getindex.(subset,"balanced_serial_s"))
+        plot!(figure, ns .^ 2, t_ref,
         marker=(:circle, 4),
-        color=palette(:default)[3],
-        label="OhMyU1",
+        color=palette(:default)[i==1 ? 3 : 1],
+        linestyle=i==1 ? :solid : :dash,
+        label="OhMyU1: $variant",
         yticks=(y_ticks, string.(y_ticks)),
         xlabel="# Variables",
         ylabel="Wall time, s",
         ylims=(0.001, 400),
         xlims=(9, 110),
     )
+    end
 
     y1 = 400
     tick_positions2 = ns .^ 2

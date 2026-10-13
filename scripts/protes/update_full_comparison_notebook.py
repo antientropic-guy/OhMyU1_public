@@ -8,6 +8,9 @@ book.cells=[c for c in book.cells if not c.metadata.get('full_comparison_extensi
 for c in book.cells:
     if c.cell_type=='markdown' and 'actual U(1) object size' in c.source:
         c.source=c.source.replace(r'n\le12',r'n\le16')
+    if c.cell_type=='markdown' and c.source.startswith('# Assignment:'):
+        c.source=c.source.replace('Analysis dated October 8, 2026.',
+            'PROTES measurements dated October 8, 2026; OhMyU1 full-indicator memory, full-indicator sampling and timed EELS measurements refreshed October 12, 2026. PROTES results and the earlier sample-initialized rank/memory diagnostics are retained unchanged.')
 def md(s):
     c=nb.v4.new_markdown_cell(s);c.metadata['full_comparison_extension']=True;book.cells.append(c)
 def code(s):
@@ -19,6 +22,8 @@ md(r'''## 9. Constructed full models and sampling speed
 Both models represent **all** permutations in the same row-major binary order. Dynamic programming retains the set of occupied columns at each cut. Allowed transitions receive ones and other transitions zeros. Exact ranks and the path count $n!$ are verified.
 
 For U(1), a backward pass counts completions $C_k(q)$. Each scalar block is replaced by $\sqrt{C_{k+1}(q')/C_k(q)}$. The product along any path is $1/\sqrt{n!}$, giving the exact right-canonical form of the uniform distribution. The project's unmodified `sample_nondeg!` is used. Preparing this form is excluded from sampling time and recorded separately.
+
+The October 12 refresh reports `sample_nondeg!(...; backend=:legacy)` and `backend=:table` separately for both full-indicator sampling and time-limited EELS. Legacy follows sampled paths through block dictionaries; table constructs transitions for all charge states on every call before drawing a batch. The separate memory-audit records supply object sizes only; their sampling timings are not used in the comparison. Full table timings come from the archived repeat after that audit. PROTES results are retained.
 
 PROTES indicator cores are actually allocated as dense arrays: padded to a common rank for fast `protes`, and using minimum variable ranks for `protes_general`. Their unmodified `_sample`, `_interface_matrices`, and JAX vectorization are used. This is the uniform distribution on the same $n!$ points. Training is disabled: the benchmark measures sampling from an exactly specified model.
 
@@ -32,9 +37,10 @@ code('''full_snapshot=json.loads((ROOT/'examples/protes_full_comparison_results.
 u1_full=full_snapshot['full_u1']
 dense_full=full_snapshot['full_protes']
 full_trials=[dict(r,method='U1') for r in u1_full]
+full_trials.extend(dict(r,method='U1 table') for r in full_snapshot.get('full_u1_table',[]))
 for result in dense_full:
     full_trials.extend(dict(r,method='PROTES '+result['variant']) for r in result['trials'])
-methods=['U1','PROTES fast','PROTES general']
+methods=['U1','U1 table','PROTES fast','PROTES general']
 fig,axes=plt.subplots(1,2,figsize=(12,4.5))
 for j,method in enumerate(methods):
     sizes=sorted({int(r['n']) for r in full_trials if r['method']==method})
@@ -44,9 +50,9 @@ for j,method in enumerate(methods):
         rates=[float(r['samples_per_second']) for r in g]
         med.append(np.median(rates));lo.append(min(rates));hi.append(max(rates))
         new.append(np.median([int(r['novel_unique'])/float(r['seconds']) for r in g]))
-    axes[0].semilogy(sizes,med,'o-',label=method)
+    axes[0].semilogy(sizes,med,'o-',label='U1 legacy' if method=='U1' else method)
     axes[0].fill_between(sizes,lo,hi,alpha=.15)
-    axes[1].plot(sizes,new,'o-',label=method)
+    axes[1].plot(sizes,new,'o-',label='U1 legacy' if method=='U1' else method)
 axes[0].set(ylabel='Samples / second',title='Full uniform indicator: median and trial range')
 axes[1].set(ylabel='New distinct feasible points / second',yscale='symlog',title='Novelty relative to the same 400 reference points')
 for ax in axes:
@@ -71,18 +77,19 @@ EELS parameters: $\gamma=1$, sector degeneracy 1, one bidirectional training swe
 
 One complete iteration at the same size is used for warm-up before measurement; neither the warm-up model nor its data is carried into the measured run. All runs are sequential, on one logical CPU, without competing benchmarks running concurrently. The scan uses $n=4,\ldots,10$, one seed, and 5 seconds. Long runs use $n=8$, three seeds, 50 seconds, and both objectives. These are the same diagnostic instances, not new held-out test files from the article.
 ''')
-code('''u1_data=full_snapshot['data_u1']
+code('''u1_data=[dict(r,sampling_backend='legacy') for r in full_snapshot['data_u1']]
+u1_data.extend(dict(r,sampling_backend='table') for r in full_snapshot.get('data_u1_table',[]))
 for r in u1_data:
     ref=base[int(r['n']),r['objective'],int(r['repetition'])]
     assert r['initial_sha256']==ref['initial_sha256'] and r['objective_sha256']==ref['objective_sha256']
     assert int(r['generated'])==int(r['feasible'])
     assert int(r['novel_unique'])<=ref['unseen_feasible']
 u1_long=[r for r in u1_data if float(r['budget'])==50]
-comparison_names=names+['U1 EELS']
+comparison_names=names+['U1 EELS legacy','U1 EELS table']
 fig,axes=plt.subplots(1,2,figsize=(13,4.7),sharex=True,sharey=True)
 for ax,obj in zip(axes,['linear','quadratic']):
     for j,name in enumerate(comparison_names):
-        g=([r for r in u1_long if r['objective']==obj] if name=='U1 EELS' else
+        g=([r for r in u1_long if r['objective']==obj and r['sampling_backend']==name.split()[-1]] if name.startswith('U1 EELS') else
            [r for r in long_runs if config_name(r)==name and r['config']['objective']==obj])
         vals=[int(r['novel_unique']) for r in g]
         ax.scatter(j+np.linspace(-.13,.13,len(vals)),vals,color=colors[j],s=40)
@@ -96,8 +103,8 @@ fig.tight_layout();savefig(fig,'protes_u1_parameter_comparison_50s');plt.show()
 fig,axes=plt.subplots(1,2,figsize=(12,4.5),sharex=True,sharey=True)
 for ax,obj in zip(axes,['linear','quadratic']):
     for j,name in enumerate(comparison_names):
-        if name=='U1 EELS':
-            g=sorted([r for r in u1_data if r['objective']==obj and float(r['budget'])==5],key=lambda r:int(r['n']))
+        if name.startswith('U1 EELS'):
+            g=sorted([r for r in u1_data if r['objective']==obj and float(r['budget'])==5 and r['sampling_backend']==name.split()[-1]],key=lambda r:int(r['n']))
             xs=[int(r['n']) for r in g]
         else:
             g=sorted([r for r in short_runs if config_name(r)==name and r['config']['objective']==obj],key=lambda r:r['config']['n'])
@@ -107,8 +114,8 @@ for ax,obj in zip(axes,['linear','quadratic']):
 axes[0].set_ylabel('New distinct feasible points (one matched trial)')
 fig.suptitle('Same initial data and objectives, 5 seconds, one CPU')
 fig.tight_layout();savefig(fig,'protes_u1_parameter_comparison_5s');plt.show()
-table(['n','Objective','Seed index','Budget','Actual seconds','Generated','New unique','Iterations started/completed','Initial fit complete','Initial best','Final best'],
-      [[r['n'],r['objective'],r['repetition'],r['budget'],f'{float(r["elapsed_seconds"]):.3f}',r['generated'],r['novel_unique'],
+table(['n','Backend','Objective','Seed index','Budget','Actual seconds','Generated','New unique','Iterations started/completed','Initial fit complete','Initial best','Final best'],
+      [[r['n'],r['sampling_backend'],r['objective'],r['repetition'],r['budget'],f'{float(r["elapsed_seconds"]):.3f}',r['generated'],r['novel_unique'],
         f'{r["iterations"]}/{r["completed_iterations"]}',r['initial_training_complete'],f'{float(r["initial_c_min"]):.3f}',f'{float(r["c_min"]):.3f}'] for r in u1_data])
 ''')
 md('''## 11. Limits of interpretation

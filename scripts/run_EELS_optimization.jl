@@ -7,6 +7,8 @@
 # No tuning: gamma=1, Best Cost selection in BOTH arms, no external samples
 # after initialization. This deliberately does not call solve(), which injects
 # fresh feasible samples every iteration in the ADD experiments.
+# Protocol 3: construct once, then sample and train on a bounded fresh elite set.
+# The original run_arm is retained for existing non-assignment callers only.
 
 using Pkg
 const ROOT = normpath(joinpath(@__DIR__, ".."))
@@ -40,6 +42,8 @@ function training_fingerprint(T)
     bytes2hex(sha256(take!(io)))
 end
 
+# Legacy restart protocol used by existing Set Partitioning / PROTES drivers.
+# The assignment cluster comparison below exclusively uses run_persistent_arm.
 function run_arm(problem, initial, sp, seed; eels=false, on_initial_training=nothing)
     cache = Dict{Tuple,Float64}()
     cached_cost(x) = get!(cache, Tuple(x)) do
@@ -114,6 +118,87 @@ function run_arm(problem, initial, sp, seed; eels=false, on_initial_training=not
     return stats, diagnostics
 end
 
+function run_persistent_arm(problem, initial, sp, seed; eels=false,
+        on_initial_training=nothing, observer=nothing)
+    0 < sp.UTILITY_FRACTION <= 1 || error("Elite fraction must be in (0, 1]")
+    sp.NUM_MPS_SAMPLES > 0 || error("Sampling batch must be nonempty")
+    cache = Dict{Tuple,Float64}()
+    cached_cost(x) = get!(cache, Tuple(x)) do
+        value = Float64(problem.cost_function(x))
+        isfinite(value) || error("Non-finite objective value")
+        value
+    end
+    T = unique(copy(initial); dims=2)
+    costs = [cached_cost(x) for x in eachcol(T)]
+    order = sortperm(costs)
+    T, costs = T[:, order], costs[order]
+    initial_training_sha256 = training_fingerprint(T)
+    isnothing(on_initial_training) || on_initial_training(copy(T))
+    stats = SolverStatistics()
+    evaluations, training_sizes, elite_sizes = Int[], Int[], Int[]
+    support_sizes, elapsed_seconds, temperatures = Float64[], Float64[], Float64[]
+    start = time_ns()
+    function record!()
+        best = argmin(costs)
+        if isempty(stats.learning_curve) || costs[best] < stats.c_min
+            stats.c_min = costs[best]
+            stats.incub = copy(T[:, best])
+        end
+        count = max(1, floor(Int, sp.UTILITY_FRACTION * length(costs)))
+        push!(stats.learning_curve, stats.c_min)
+        push!(stats.utility_curve, mean(sort(costs)[1:count]))
+        push!(evaluations, length(cache))
+        push!(elapsed_seconds, (time_ns() - start) / 1e9)
+    end
+    record!()
+    # EELS is applied exactly once. Both arms retain their learned amplitudes.
+    mps = build_mps_from_feasible_samples(problem, T, 1, eels)
+    orthogonalize!(mps)
+    support = Float64(u1_norm(mps)^2)
+    stats.num_samples_in_mps = support < typemax(Int) ? round(Int, support) : -1
+    normalize!(mps)
+    isnothing(observer) || observer(:initialized, 0, mps, T)
+    for iteration in 1:sp.NUM_GLOBAL_ITER
+        # Algorithm 1 samples before fitting, including on the first iteration.
+        isnothing(observer) || observer(:before_sampling, iteration, mps, T)
+        Random.seed!(seed + 10_000_000iteration)
+        samples = zeros(Int, problem.num_vars, sp.NUM_MPS_SAMPLES)
+        sample_nondeg!(mps, samples, sp.NUM_MPS_SAMPLES; backend=:legacy)
+        all(problem.A * samples .== problem.b) || error("Infeasible generated sample")
+        candidates = unique(samples; dims=2)
+        candidate_costs = [cached_cost(x) for x in eachcol(candidates)]
+        stats.num_unique_samples = length(candidate_costs)
+        # Train ONLY on the best bounded set from this batch. Historical
+        # points are not injected; the best-ever solution is recorded separately.
+        count = min(sp.NUM_FEASIBLE_SAMPLES, length(candidate_costs))
+        selected = sortperm(candidate_costs)[1:count]
+        T = candidates[:, selected]
+        costs = candidate_costs[selected]
+        isnothing(observer) || observer(:selected, iteration, mps, candidates)
+        push!(training_sizes, size(T, 2))
+        push!(elite_sizes, count)
+        push!(support_sizes, support) # Structural support, not the trained norm.
+        temperature = length(costs) > 1 ? std(costs) : 0.0
+        weights = temperature > 0 ? exp.(-(costs .- minimum(costs)) ./ temperature) : ones(length(costs))
+        weights ./= sum(weights)
+        isnothing(observer) || observer(:before_training, iteration, mps, T)
+        train_nondeg!(mps, sp.NUM_SWEEP_ITER, T, weights, TrainParams(sp.LEARNING_RATE, 1))
+        norm = u1_norm(mps)
+        isfinite(norm) && norm > 0 || error("Invalid trained norm")
+        normalize!(mps)
+        stats.temperature = temperature
+        push!(temperatures, temperature)
+        isnothing(observer) || observer(:after_training, iteration, mps, T)
+        record!()
+    end
+    stats.num_to_keep_worst = 0
+    diagnostics = (; evaluations, support_sizes, training_sizes, elite_sizes,
+        elapsed_seconds, temperatures, initial_training_sha256,
+        model_initializations=1, eels_applications=Int(eels),
+        utility_definition="mean lowest UTILITY_FRACTION (at least one) of current training elites")
+    stats, diagnostics
+end
+
 function run_group(split, objective, ns, instances, sp, output)
     mkpath(output)
     path = joinpath(output, "res_EELS_gamma1_$(objective)_$(split).jld2")
@@ -125,7 +210,10 @@ function run_group(split, objective, ns, instances, sp, output)
         isfile(source) || error("Missing existing instance: $source")
         hashes[(n, i)] = bytes2hex(sha256(read(source)))
     end
-    configuration = (; protocol=1, split, objective, gamma=1, ns=collect(ns),
+    configuration = (; protocol=3, split, objective, gamma=1, ns=collect(ns),
+        model_policy="initialize once; sample then train; retain amplitudes",
+        selection="best NUM_FEASIBLE_SAMPLES distinct points from current batch only",
+        sampling_backend="legacy",
         instances=collect(instances), hashes,
         parameters=NamedTuple{fieldnames(SolverParams)}(Tuple(getfield(sp, f) for f in fieldnames(SolverParams))),
         seed_rule="20261006 + 1000000*(test) + 100000*(quadratic) + 100*n + i",
@@ -159,7 +247,7 @@ function run_group(split, objective, ns, instances, sp, output)
             initial = zeros(Int, n^2, sp.NUM_FEASIBLE_SAMPLES)
             fill_assignment_vectors!(initial, n)
             initial_sha256 = training_fingerprint(initial)
-            pair = Dict(arm => run_arm(problem, initial, sp, seed; eels=(arm == "EELS")) for arm in ARMS)
+            pair = Dict(arm => run_persistent_arm(problem, initial, sp, seed; eels=(arm == "EELS")) for arm in ARMS)
             training_fingerprint(initial) == initial_sha256 || error("Shared initial data were mutated")
             pair["best_cost"][2].initial_training_sha256 == pair["EELS"][2].initial_training_sha256 ||
                 error("Initial training data differ between paired strategies")
@@ -185,8 +273,9 @@ function main(args=ARGS)
     BLAS.set_num_threads(1)
     sp = SolverParams(NUM_FEASIBLE_SAMPLES=smoke ? 20 : 400,
         NUM_MPS_SAMPLES=smoke ? 40 : 10000, NUM_GLOBAL_ITER=smoke ? 2 : 20,
-        NUM_SWEEP_ITER=1, LINK_DEGENERACY=1, LEARNING_RATE=0.05, KEEP_NUM_WORST=0.0)
-    output = joinpath(ROOT, "data", "eels_optimization", smoke ? "smoke" : "gamma1")
+        NUM_SWEEP_ITER=1, LINK_DEGENERACY=1, LEARNING_RATE=0.05,
+        UTILITY_FRACTION=0.05, KEEP_NUM_WORST=0.0)
+    output = joinpath(ROOT, "data", "eels_optimization", smoke ? "smoke_persistent_v3" : "gamma1_persistent_v3")
     mkpath(output)
     # Prevent simultaneous writers (also when launching Julia without Bash).
     lockdir = joinpath(output, ".running")

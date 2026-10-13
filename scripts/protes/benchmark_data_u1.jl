@@ -4,7 +4,7 @@ using OhMyU1: OptimizationProblem,assignment_matrix,build_mps_from_feasible_samp
 BLAS.set_num_threads(1)
 Threads.nthreads()==1 || error("Use --threads=1")
 
-function trial(n,objective,rep,budget;eels=true,maxiter=typemax(Int))
+function trial(n,objective,rep,budget;eels=true,maxiter=typemax(Int),backend=:legacy)
     root=normpath(joinpath(@__DIR__,"..",".."))
     stem=joinpath(root,"data","protes_comparison","scaling","paired_inputs","$(objective)_$(n)_$(rep)")
     raw=read(stem*".i32");value_raw=read(stem*".f64");hashes=readlines(stem*".sha256")
@@ -38,7 +38,7 @@ function trial(n,objective,rep,budget;eels=true,maxiter=typemax(Int))
         accepted=Vector{Vector{Int}}();batch=zeros(Int,n*n,100)
         for _ in 1:100 # standard 10,000 samples per outer iteration, deadline checks every 100
             expired() && break
-            sample_nondeg!(mps,batch,100)
+            sample_nondeg!(mps,batch,100; backend)
             expired() && break # discard a batch arriving after the deadline, as for PROTES
             all(problem.A*batch .== 1) || error("Infeasible generated sample")
             generated+=100
@@ -60,14 +60,17 @@ function main()
     root=normpath(joinpath(@__DIR__,"..",".."))
     stage=isempty(ARGS) ? "short" : ARGS[1]
     stage in ("short","long") || error("Use short or long")
-    out=joinpath(root,"data","protes_comparison","scaling","data_u1_$(stage).csv")
+    backend=length(ARGS)>=2 ? Symbol(ARGS[2]) : :legacy
+    backend in (:legacy,:table) || error("Unknown sampling backend")
+    suffix=backend==:legacy ? "" : "_table"
+    out=joinpath(root,"data","protes_comparison","scaling","data_u1_$(stage)$(suffix).csv")
     # Same-dimension warmup on repetition 2, outside all measured budgets.
     open(out,"w") do io
         println(io,"n,objective,repetition,budget,method,generated,feasible,unique,novel_unique,elapsed_seconds,iterations,completed_iterations,initial_training_complete,initial_c_min,c_min,initial_sha256,objective_sha256")
         for n in (stage=="short" ? (4:10) : (8:8)), objective in ("linear","quadratic")
-            trial(n,objective,2,Inf;maxiter=1)
+            trial(n,objective,2,Inf;maxiter=1,backend)
             for rep in (stage=="short" ? (0:0) : (0:2))
-                GC.gc();row=trial(n,objective,rep,stage=="short" ? 5.0 : 50.0)
+                GC.gc();row=trial(n,objective,rep,stage=="short" ? 5.0 : 50.0;backend)
                 println(io,join(row,','));flush(io)
                 println("Data U1 ",join(row[1:13],','));flush(stdout)
             end

@@ -55,7 +55,9 @@ end
                 @test assignment_matrix(12) * stats.incub == ones(Int, 24)
                 @test dot(c, stats.incub) ≈ stats.c_min
                 @test details.evaluations[end] <= 20 + 2 * 40
-                @test all(details.training_sizes .<= 20)
+                @test all(1 .<= details.training_sizes .<= 20)
+                @test details.model_initializations == 1
+                @test details.eels_applications == Int(arm == "EELS")
             end
         end
         before = read(path)
@@ -72,8 +74,8 @@ end
     Random.seed!(123)
     fill_assignment_vectors!(initial, 3)
     problem = OptimizationProblem(A=A, b=ones(Int, 6), cost_function=x -> 1.0)
-    first, _ = run_arm(problem, initial, sp, 123; eels=true)
-    second, _ = run_arm(problem, initial, sp, 123; eels=true)
+    first, _ = run_persistent_arm(problem, initial, sp, 123; eels=true)
+    second, _ = run_persistent_arm(problem, initial, sp, 123; eels=true)
     @test first.learning_curve == second.learning_curve == [1.0, 1.0, 1.0]
     @test first.incub == second.incub
 
@@ -88,11 +90,49 @@ end
     problem = OptimizationProblem(A=assignment_matrix(n), b=ones(Int, 2n), cost_function=x -> dot(x, q*x))
     observed = Dict{String,Matrix{Int}}()
     for arm in ARMS
-        run_arm(problem, initial, sp, 123; eels=(arm == "EELS"),
+        run_persistent_arm(problem, initial, sp, 123; eels=(arm == "EELS"),
             on_initial_training=T -> (observed[arm] = T))
         @test initial == untouched
         rand(1000) # deliberately disturb the current RNG between the arms
     end
     @test observed["best_cost"] == observed["EELS"]
     @test size(observed["best_cost"], 2) == size(unique(initial; dims=2), 2)
+end
+
+@testset "Persistent amplitudes and fresh bounded elites" begin
+    initial = hcat([1,0,0,0,1,0,0,0,1], [0,1,0,1,0,0,0,0,1])
+    problem = OptimizationProblem(A=assignment_matrix(3), b=ones(Int,6),
+        cost_function=x -> Float64(dot(collect(1:9).^2, x)))
+    sp = SolverParams(NUM_FEASIBLE_SAMPLES=2, NUM_MPS_SAMPLES=40,
+        NUM_GLOBAL_ITER=3, UTILITY_FRACTION=0.5, KEEP_NUM_WORST=0.0)
+    for eels in (false,true)
+        model = Ref{Any}(nothing)
+        last_cores = Ref{Any}(nothing)
+        expected = Ref{Any}(nothing)
+        events = Symbol[]
+        function observe(stage, iteration, mps, T)
+            push!(events,stage)
+            if stage == :initialized
+                model[] = mps
+            else
+                @test mps === model[]
+            end
+            if stage == :before_sampling && iteration > 1
+                @test [c.Blocks for c in mps.Cores] == last_cores[]
+            elseif stage == :selected
+                order = sortperm([problem.cost_function(x) for x in eachcol(T)])
+                expected[] = T[:,order[1:min(sp.NUM_FEASIBLE_SAMPLES,length(order))]]
+            elseif stage == :before_training
+                @test T == expected[]
+                @test size(T,2) <= sp.NUM_FEASIBLE_SAMPLES
+            elseif stage == :after_training
+                last_cores[] = deepcopy([c.Blocks for c in mps.Cores])
+                @test u1_norm(mps) ≈ 1
+            end
+        end
+        stats, diag = run_persistent_arm(problem, initial, sp, 321; eels, observer=observe)
+        @test events == vcat([:initialized], repeat([:before_sampling,:selected,:before_training,:after_training],3))
+        @test all(diff(stats.learning_curve) .<= 0)
+        @test initial == hcat([1,0,0,0,1,0,0,0,1], [0,1,0,1,0,0,0,0,1])
+    end
 end
