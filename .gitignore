@@ -107,5 +107,6 @@ AGENTS.md
 /data/sa_cluster_v1/smoke/
 /data/sa_cluster_v1/**/*.pending
 /scripts/sa_cluster/smoke/
-/data/sa_cluster_v2/results/
+/data/sa_cluster_v2/results/logs/
+/data/sa_cluster_v2/results/*.jld2.lock/
 /data/sa_cluster_v2/**/*.pending
