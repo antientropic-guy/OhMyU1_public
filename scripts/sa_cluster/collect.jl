@@ -2,22 +2,29 @@
 push!(LOAD_PATH,normpath(joinpath(@__DIR__,"..","..")))
 using JLD2, SparseArrays, SHA
 root=normpath(joinpath(@__DIR__,"..",".."))
-folder=isempty(ARGS) ? joinpath(root,"data","sa_cluster_v1","results") : abspath(only(ARGS))
+folder=isempty(ARGS) ? joinpath(root,"data","sa_cluster_v2","results") : abspath(only(ARGS))
 combined=Dict{Tuple{String,Int,Int,String,Int,String},Any}()
 protocols=Dict{String,Any}()
 reference=nothing
-for (family,n) in (("assignment",12),("assignment",14),("partition",12),("partition",14))
-    path=joinpath(folder,"$(family)_n$(n).jld2")
+for family in ("assignment","partition"), objective in ("quadratic","entropic")
+    firstpath=joinpath(folder,"$(family)_$(objective)_worker1.jld2")
+    firstprotocol=load(firstpath,"protocol")
+    for worker in 1:firstprotocol.workers
+    path=joinpath(folder,"$(family)_$(objective)_worker$(worker).jld2")
     d=load(path);p=d["protocol"]
-    @assert p.family==family && p.n==n
-    signature=(p.manifest_sha256,p.sources,p.budgets,p.count,p.julia_version,p.optim_version)
+    @assert p.version==2 && p.family==family && p.objectives==[objective] && p.worker==worker
+    signature=(p.manifest_sha256,p.sources,p.budgets,p.count,p.sizes,p.workers,p.methods,p.julia_version,p.optim_version)
     if isnothing(reference);global reference=signature;else;@assert reference==signature;end
-    expected=p.count*length(p.objectives)*length(p.budgets)*length(p.methods)
+    assigned=[(n,i) for i in 1:p.count for n in sort(p.sizes)][worker:p.workers:end]
+    @assert p.assigned==assigned
+    expected=length(assigned)*length(p.objectives)*length(p.budgets)*length(p.methods)
     length(d["results"])==expected || error("Incomplete shard $path: $(length(d["results"]))/$(expected)")
-    @assert Set(keys(d["results"]))==Set((i,o,b,m) for i in 1:p.count for o in p.objectives for b in p.budgets for m in p.methods)
-    protocols["$(family)_n$(n)"]=p
-    for ((instance,objective,budget,method),r) in d["results"]
+    @assert Set(keys(d["results"]))==Set((n,i,o,b,m) for (n,i) in assigned for o in p.objectives for b in p.budgets for m in p.methods)
+    protocols["$(family)_$(objective)_worker$(worker)"]=p
+    for ((n,instance,objective,budget,method),r) in d["results"]
+        @assert !haskey(combined,(family,n,instance,objective,budget,method))
         combined[(family,n,instance,objective,budget,method)]=r
+    end
     end
 end
 temporary=joinpath(folder,"combined.jld2.pending")

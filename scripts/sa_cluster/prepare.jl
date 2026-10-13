@@ -45,15 +45,26 @@ function atomic_save(path;kwargs...)
     mv(temporary,path;force=true)
 end
 
-function prepare(;out=joinpath(ROOT,"data","sa_cluster_v1"),sizes=(12,14),count=40)
+function prepare(;out=joinpath(ROOT,"data","sa_cluster_v1"),sizes=(12,14),count=40,
+                 source_root=ROOT,previous=nothing)
     isfile(joinpath(out,"manifest.jld2")) && error("Input snapshot already exists; do not overwrite a running experiment")
     mkpath(joinpath(out,"inputs"))
     records=NamedTuple[]
+    if !isnothing(previous)
+        old=load(joinpath(previous,"manifest.jld2"),"manifest")
+        @assert old.count==count && isempty(intersect(old.sizes,collect(sizes)))
+        for entry in old.records
+            source=joinpath(previous,"inputs",entry.file)
+            @assert bytes2hex(sha256(read(source)))==entry.sha256
+            cp(source,joinpath(out,"inputs",entry.file))
+            push!(records,entry)
+        end
+    end
     for n in sizes
         aranks=assignment_profile(n)
         for rep in 1:count
-            source=joinpath(ROOT,"data","set_partitioning","test","instances","light","instance_$(n)_$(rep)_test.jld2")
-            qsource=joinpath(ROOT,"data","test_random_bilinear_forms","q_$(n)_$(rep)_r=7_test.jld2")
+            source=joinpath(source_root,"data","set_partitioning","test","instances","light","instance_$(n)_$(rep)_test.jld2")
+            qsource=joinpath(source_root,"data","test_random_bilinear_forms","q_$(n)_$(rep)_r=7_test.jld2")
             d=load(source);raw=d["instance"];old=d["objectives"]
             order=sortperm(raw.tiles;by=t->(first(t),length(t)==1 ? 1 : 0,Tuple(t)))
             tiles=raw.tiles[order];m=length(raw.b)
@@ -98,7 +109,8 @@ function prepare(;out=joinpath(ROOT,"data","sa_cluster_v1"),sizes=(12,14),count=
             println("Prepared paired n=$n instance=$rep: assignment rank=$(maximum(aranks)), partition rank=$(maximum(sranks))");flush(stdout)
         end
     end
-    manifest=(version=1,count=count,sizes=collect(sizes),initial_count=400,objectives=["quadratic","entropic"],
+    sizes=sort(unique(r.n for r in records))
+    manifest=(version=1,count=count,sizes=sizes,initial_count=400,objectives=["quadratic","entropic"],
               budgets=[10,50,200],records=records)
     atomic_save(joinpath(out,"manifest.jld2");manifest)
     open(joinpath(out,"rank_summary.csv"),"w") do io

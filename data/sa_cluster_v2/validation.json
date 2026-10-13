@@ -1,0 +1,21 @@
+{
+  "tests": {
+    "toy_structures_and_objectives": 1111,
+    "frozen_inputs": 843,
+    "synthetic_collection": 12,
+    "mocked_dispatch_resume": 10
+  },
+  "all_passed": true,
+  "cluster_jobs_submitted": 0,
+  "production_comparisons_run_locally": 0,
+  "input_files": 240,
+  "input_bytes": 56713708,
+  "manifest_sha256": "5308908d3e16d9b777a05863d7ff7882a8b14bbc9829a7f8b1fff2751a0977dd",
+  "cluster_allocations": 4,
+  "cpus_per_allocation": 32,
+  "memory_mib_per_allocation": 380000,
+  "total_optimizer_runs": 4320,
+  "nominal_cpu_hours": 104,
+  "nominal_longest_worker_minutes": 52,
+  "notes": "Only input preparation, toy functional tests and mock dispatch were executed. The 160 original inputs are unchanged. Wall-clock estimates exclude preparation, compilation, I/O, deadline overruns and cluster queue time."
+}

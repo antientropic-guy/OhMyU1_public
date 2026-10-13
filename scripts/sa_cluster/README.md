@@ -6,41 +6,67 @@ No cluster submission is made by preparing the data or running the toy tests.
 
 ## Frozen design
 
-Four independent Slurm workers cover assignment and spatial strip Set Partitioning
-at n = 12 and 14. Here n is the size parameter: each task has n squared binary
-variables. There are 40 instances per worker, selected by numeric IDs 1--40 before
-running any optimization. Every instance is evaluated with both objectives, all
-three methods and independent 10, 50 and 200 second budgets. This is 720 optimizer
-runs per worker, or 2,880 total. Nominal optimization time is 17.3 hours per worker
-(69.3 CPU-hours total), plus compilation, structural checks, saving and cooperative
-deadline overruns. Each worker requests one CPU, 32 GiB RAM and 48 hours. At most
-four workers from this array run concurrently; site-wide per-user limits also apply.
+Four Slurm allocations cover the Cartesian product of family (assignment / spatial
+strip Set Partitioning) and objective (quadratic / entropic). Each allocation
+requests an exclusive node, 32 single-core tasks, 380000 MiB RAM (about 371.1 GiB)
+and 48 hours, and launches 32 independent
+single-core Julia processes with one `srun`. At most four allocations run at once.
+Each process has its own result file; methods are sequential within a process.
+
+Sizes are n = 10, 12, 14, with n squared binary variables and 40 instances per
+(family,n), selected by IDs 1--40 before optimization. Both objectives, three
+methods and independent 10, 50, 200 second budgets give 4,320 optimizer runs.
+Total nominal optimization is 240 * 2 * 3 * 260 = 374,400 seconds = 104 CPU-hours.
+Each allocation processes 120 instance/objective pairs: 24 processes get four
+pairs and eight get three. Each pair costs 3 * 260 = 780 nominal seconds, so
+the longest process costs 3,120 seconds = 52 minutes (ideal perfect balancing:
+48.75 minutes). This excludes compilation, structural checks, saving and cooperative
+deadline overruns. Queue time, memory bandwidth contention and preparation make
+actual elapsed time longer; no cluster measurement is available yet. Memory is
+shared across the allocation (about 11.6 GiB per active process on average, not an enforced
+per-process limit); simultaneous full n=14 models can increase memory pressure.
 Other jobs already owned by the user can delay scheduling.
+
+The reported c32m384 node capacity is 64 Slurm CPUs and 380000 MiB. The CPU count
+alone does not distinguish physical cores from SMT threads. We retain 32 processes
+with `--hint=nomultithread` and core binding rather than assuming 64 physical cores.
+Exclusive allocation avoids competition with unrelated jobs on sibling threads.
+The launcher logs `scontrol show job` and `scontrol show node` for actual topology.
+The former request of 384G meant 393216 MiB, exceeding the reported node capacity.
 
 | Family | n | Binary variables | Equalities | Mean maximum exact rank ± SD | Mean of mean exact ranks ± SD |
 |---|---:|---:|---:|---:|---:|
+| Assignment | 10 | 100 | 20 | 461 ± 0 | 175.86 ± 0 |
 | Assignment | 12 | 144 | 24 | 1715 ± 0 | 601.52 ± 0 |
 | Assignment | 14 | 196 | 28 | 6434 ± 0 | 2100.52 ± 0 |
+| Strip Set Partitioning | 10 | 100 | 30 | 27.70 ± 5.16 | 12.37 ± 1.04 |
 | Strip Set Partitioning | 12 | 144 | 36 | 36.05 ± 5.34 | 16.16 ± 1.08 |
 | Strip Set Partitioning | 14 | 196 | 42 | 45.35 ± 5.52 | 19.83 ± 1.39 |
 
 Ranks are total bond dimensions of the full exact indicator in the specified
 binary variable order, not dimensions of degenerate charge blocks. They are
 computed exactly by coverage-state dynamic programming / enumeration, without
-estimating them from the initial sample. SP maximum ranks range from 27 to 49
-at n=12 and 37 to 59 at n=14. No instances were filtered by optimization outcomes.
+estimating them from the initial sample. SP maximum ranks range from 20 to 39
+at n=10, 27 to 49 at n=12 and 37 to 59 at n=14. No instances were filtered by optimization outcomes.
 The full assignment n=14 model is not truncated to the rank of its sampled model.
 
 ## Inputs and objectives
 
-`data/sa_cluster_v1/inputs/` contains 160 standalone compressed JLD2 records,
-approximately 47 MB altogether. Copy this entire directory and `manifest.jld2`
+`data/sa_cluster_v2/inputs/` contains 240 standalone compressed JLD2 records.
+Copy this entire directory and `manifest.jld2`
 to the cluster with the repository. The runner does not need the older SA pilots
 or the source input directories. Each record includes A, b, initial points, both
 objectives, seeds, tile definitions where applicable, full rank profile, exact
 support count and provenance hashes. `rank_summary.csv` summarizes the snapshot.
 
-SP uses the first 40 existing `light` strip test instances at each n. Tiles are
+SP uses the first 40 existing `light` strip test instances at n=12,14. The n=10
+instances use the same generator and seed convention (811000000 + 1000n + ID).
+`extend_n10.jl` creates the isolated v2 snapshot, copying all 160 old input files
+byte-for-byte and generating 80 new records. It refuses to overwrite v2.
+The n=10 quadratic matrices use independent seeds 912010000 + ID, with the same
+symmetrized uniform [-7,7] construction as the older test generator. Their raw
+sources are saved under `sources_n10/`; none of the old source files are changed.
+Tiles are
 ordered by minimum geometric cell, with the singleton last for that cell: the
 same fixed low-rank spatial order as in the prior strip pilot. There is no variable
 order search. Rows are restored to geometric cell order. Sampling uses the exact
@@ -50,7 +76,8 @@ permutations, encoded in the original row-major binary order. The initial datase
 for a task is identical for every method, objective and budget. It is evaluated
 and ranked afresh under the selected objective.
 
-Quadratic cost is x'Qx, using the existing test matrices `q_n_i_r=7_test.jld2`,
+Quadratic cost is x'Qx, using the existing test matrices `q_n_i_r=7_test.jld2` at n=12,14
+and the new matrices described above at n=10,
 including diagonal and both off-diagonal directions. For each (n,i), exactly the
 same Q is supplied to assignment and SP in their fixed coordinate orders.
 
@@ -96,7 +123,7 @@ later persistent-model or stagnation-restart comparison.
 
 All methods receive the same black-box objective implementation. Every method
 runs sequentially on the allocated CPU with one Julia and one BLAS thread.
-Objective and method order rotate by instance ID. Seeds are fixed, but different
+Method order rotates by instance ID. Each allocation has one objective. Seeds are fixed, but different
 budgets are independent trials, not prefixes: SA cooling depends on the budget.
 There is one optimization seed per instance, not 40 repeated seeds on one task.
 
@@ -118,13 +145,13 @@ bash scripts/bash/run_SA_cluster.sh
 
 The wrapper instantiates the root and pinned Optim environments once on the
 submission host (no optimization there), then submits array 0--3 with concurrency
-limited to four. Julia 1.12 is required by the root project; Julia 1.12.5 / Optim
+limited to four, each using 32 CPUs. Julia 1.12 is required by the root project; Julia 1.12.5 / Optim
 2.3.2 match the supplied environment. First-time dependency installation requires
 package access. Compilation uses existing caches and ordinary in-memory JIT;
 there is no inter-worker synchronization or shared results dictionary.
 
 Each completed method is checkpointed atomically into its worker file under
-`data/sa_cluster_v1/results/`. Running the same command resumes completed workers
+`data/sa_cluster_v2/results/`. Running the same command resumes completed workers
 and skips completed methods. Code, input, budget and package-version fingerprints
 must match existing results. Do not edit the adapters midway through a run.
 Directory locks prevent two simultaneous writers to one worker file. After a hard
@@ -134,7 +161,8 @@ Changing the design requires a separate `--output=...` directory.
 
 ## Saved information and collection
 
-Each worker stores `results[(instance, objective, budget, method)] => Dict` and
+There are 128 private files named `family_objective_workerK.jld2`.
+Each worker stores `results[(n, instance, objective, budget, method)] => Dict` and
 its full protocol. Result dictionaries contain the initial/final best costs,
 best feasible solution, incumbent histories versus time and objective-call count,
 actual elapsed time, completed iterations/chains, sample/proposal counts,
@@ -149,7 +177,7 @@ Optim's repeated incumbent evaluations. They are not unique-state counts or
 intrinsic query-complexity bounds. Hardware can differ across workers; paired
 method comparisons within a worker use the same allocated CPU.
 
-After all four files have been downloaded (or on the cluster), run:
+After all 128 files have been downloaded (or on the cluster), run:
 
 ```bash
 julia --project=. scripts/sa_cluster/collect.jl

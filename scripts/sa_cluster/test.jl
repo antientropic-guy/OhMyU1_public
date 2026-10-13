@@ -68,10 +68,13 @@ using Test
 end
 
 @testset "Frozen snapshot" begin
-    folder=joinpath(ROOT,"data","sa_cluster_v1")
+    folder=joinpath(ROOT,"data","sa_cluster_v2")
     if isfile(joinpath(folder,"manifest.jld2"))
         manifest=load(joinpath(folder,"manifest.jld2"),"manifest")
-        @test length(manifest.records)==160
+        @test length(manifest.records)==240
+        @test manifest.sizes==[10,12,14]
+        previous=load(joinpath(ROOT,"data","sa_cluster_v1","manifest.jld2"),"manifest")
+        @test all(e in manifest.records for e in previous.records)
         for entry in manifest.records
             path=joinpath(folder,"inputs",entry.file)
             @test bytes2hex(sha256(read(path)))==entry.sha256

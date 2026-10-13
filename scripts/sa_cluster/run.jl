@@ -1,4 +1,4 @@
-# One sequential worker per (family, size). No inter-job mutable state.
+# Independent single-core shards within four family/objective allocations.
 include("prepare.jl")
 
 function make_objective(record, kind)
@@ -33,27 +33,30 @@ function source_fingerprint()
     Dict(replace(f,'\\'=>'/')=>bytes2hex(sha256(read(joinpath(ROOT,f)))) for f in files if isfile(joinpath(ROOT,f)))
 end
 
-function run_worker(;job,root=joinpath(ROOT,"data","sa_cluster_v1"),output=joinpath(root,"results"),
-                    budgets=[10,50,200],count=40)
+function run_worker(;job,root=joinpath(ROOT,"data","sa_cluster_v2"),output=joinpath(root,"results"),
+                    budgets=[10,50,200],count=40,worker=1,workers=32)
     job in 0:3 || error("job must be in 0:3")
     all(>(0),budgets) && allunique(budgets) || error("Positive unique budgets required")
-    family,n=(("assignment",12),("assignment",14),("partition",12),("partition",14))[job+1]
+    1<=worker<=workers<=32 || error("Require 1 <= worker <= workers <= 32")
+    family,objective_kind=(("assignment","quadratic"),("assignment","entropic"),("partition","quadratic"),("partition","entropic"))[job+1]
     manifest_path=joinpath(root,"manifest.jld2");manifest=load(manifest_path,"manifest")
     1<=count<=manifest.count || error("Requested count exceeds frozen input snapshot")
-    records=sort(filter(r->r.family==family && r.n==n && r.instance<=count,manifest.records);by=r->r.instance)
-    length(records)==count || error("Incomplete input manifest")
+    records=sort(filter(r->r.family==family && r.instance<=count,manifest.records);by=r->(r.instance,r.n))
+    length(records)==count*length(manifest.sizes) || error("Incomplete input manifest")
+    records=records[worker:workers:end]
     Threads.nthreads()==1 && BLAS.get_num_threads()==1 || error("Use one Julia and BLAS thread")
     mkpath(output)
-    path=joinpath(output,"$(family)_n$(n).jld2")
-    protocol=(version=1,family=family,n=n,count=count,budgets=budgets,methods=["SA","U1_data_EELS","U1_full"],
-        objectives=["quadratic","entropic"],initial_samples=400,mps_samples=10000,elite_count=400,
+    path=joinpath(output,"$(family)_$(objective_kind)_worker$(worker).jld2")
+    protocol=(version=2,family=family,sizes=manifest.sizes,worker=worker,workers=workers,
+        assigned=[(r.n,r.instance) for r in records],count=count,budgets=budgets,methods=["SA","U1_data_EELS","U1_full"],
+        objectives=[objective_kind],initial_samples=400,mps_samples=10000,elite_count=400,
         lr=0.05,sweeps=1,backend="legacy",charge_degeneracy=1,sa_chains=10,
         mps_reset="every iteration",elite_selection="best distinct old elites plus new samples",
         mps_temperature="std of current elite costs",sa_temperature="initial std to 0.001 over each chain",
         timing="model construction included; SA move catalogue and compilation excluded",
         manifest_sha256=bytes2hex(sha256(read(manifest_path))),sources=source_fingerprint(),
         julia_version=string(VERSION),optim_version=string(pkgversion(Optim)))
-    results=Dict{Tuple{Int,String,Int,String},Any}()
+    results=Dict{Tuple{Int,Int,String,Int,String},Any}()
     if isfile(path)
         previous=load(path)
         previous["protocol"]==protocol || error("Existing output has a different protocol/input/code; choose a new output directory")
@@ -69,7 +72,10 @@ function run_worker(;job,root=joinpath(ROOT,"data","sa_cluster_v1"),output=joinp
         slurm_cpu_bind=get(ENV,"SLURM_CPU_BIND_LIST","not recorded"))
     warmed=Set{String}()
     try
+        # Empty shards are valid for reduced smoke designs and remain collectable.
+        isempty(records) && atomic_save(path;results,protocol)
         for entry in records
+            n=entry.n
             inputpath=joinpath(root,"inputs",entry.file)
             bytes2hex(sha256(read(inputpath)))==entry.sha256 || error("Input checksum mismatch")
             record=load(inputpath,"record")
@@ -78,7 +84,7 @@ function run_worker(;job,root=joinpath(ROOT,"data","sa_cluster_v1"),output=joinp
             ctx=adapter_context(record)
             # Rotate objective and method order without outcome-dependent choices.
             for kind in circshift(protocol.objectives,mod(entry.instance-1,2))
-                all(haskey(results,(entry.instance,kind,b,m)) for b in budgets for m in protocol.methods) && continue
+                all(haskey(results,(n,entry.instance,kind,b,m)) for b in budgets for m in protocol.methods) && continue
                 objective=make_objective(record,kind)
                 if !(kind in warmed)
                     sa_trial(ctx.input,Inf;objective,A=record.A,neighbor=ctx.neighbor,restarts=1,max_steps_per_chain=100)
@@ -89,7 +95,7 @@ function run_worker(;job,root=joinpath(ROOT,"data","sa_cluster_v1"),output=joinp
                     push!(warmed,kind)
                 end
                 for budget in budgets,method in circshift(protocol.methods,mod(entry.instance-1,3))
-                    key=(entry.instance,kind,budget,method)
+                    key=(n,entry.instance,kind,budget,method)
                     haskey(results,key) && continue
                     GC.gc()
                     measured=@timed (method=="SA" ?
@@ -122,11 +128,12 @@ if abspath(PROGRAM_FILE)==(@__FILE__)
     opts=Dict{String,String}()
     for arg in ARGS
         startswith(arg,"--") && occursin('=',arg) || error("Use --name=value arguments")
-        k,v=split(arg[3:end],'=';limit=2);k in ("job","root","output","budgets","count") || error("Unknown option: $k")
+        k,v=split(arg[3:end],'=';limit=2);k in ("job","root","output","budgets","count","worker","workers") || error("Unknown option: $k")
         opts[k]=v
     end
     haskey(opts,"job") || error("Required: --job=0|1|2|3")
-    root=abspath(get(opts,"root",joinpath(ROOT,"data","sa_cluster_v1")))
+    root=abspath(get(opts,"root",joinpath(ROOT,"data","sa_cluster_v2")))
     run_worker(;job=parse(Int,opts["job"]),root,output=abspath(get(opts,"output",joinpath(root,"results"))),
-        budgets=parse.(Int,split(get(opts,"budgets","10,50,200"),',')),count=parse(Int,get(opts,"count","40")))
+        budgets=parse.(Int,split(get(opts,"budgets","10,50,200"),',')),count=parse(Int,get(opts,"count","40")),
+        worker=parse(Int,get(opts,"worker","1")),workers=parse(Int,get(opts,"workers","32")))
 end
