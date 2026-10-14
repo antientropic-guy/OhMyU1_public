@@ -122,3 +122,13 @@ AGENTS.md
 /data/sa_cluster_v2/results/logs/
 /data/sa_cluster_v2/results/*.jld2.lock/
 /data/sa_cluster_v2/**/*.pending
+
+# vs-code settings:
+.vscode/
+
+# Historical experiment data retained locally.
+/data/random_assignment/
+/data/test_random_assignment/
+/data/eels_optimization/gamma1/
+/data/set_partitioning/test/
+/data/set_partitioning/locality_v1/
