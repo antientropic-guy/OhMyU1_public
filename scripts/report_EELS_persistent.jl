@@ -99,6 +99,32 @@ for objective in ("linear","quadratic")
     hline!(p,[0.];color=:gray,linestyle=:dash,label="")
     savefig(p,joinpath(out,"EELS_$(objective).png"))
     savefig(p,joinpath(out,"EELS_$(objective).svg"))
+    article_plot=deepcopy(p)
+    plot!(article_plot;title="",size=(600,360),guidefontsize=12,tickfontsize=11,legendfontsize=10)
+    savefig(article_plot,joinpath(out,"EELS_$(objective).pdf"))
 end
+distribution_rows=NamedTuple[]
+quadratic_groups=[[r.improvement_pct for r in rows if r.objective=="quadratic" && r.variables==N] for N in (225,256)]
+bins=(floor(minimum(vcat(quadratic_groups...)))-.5):1.:(ceil(maximum(vcat(quadratic_groups...)))+.5)
+histogram_max=maximum(count(x->bins[j]<=x<bins[j+1],g) for g in quadratic_groups for j in 1:length(bins)-1)
+for (N,g) in zip((225,256),quadratic_groups)
+    q1,q2,q3=quantile(g,[.25,.5,.75]);avg=mean(g)
+    push!(distribution_rows,(variables=N,N=length(g),wins=count(>(0),g),ties=count(iszero,g),losses=count(<(0),g),mean_pct=avg,q1_pct=q1,median_pct=q2,q3_pct=q3))
+    p=histogram(g;bins=bins,color=:steelblue,alpha=.65,label="50 paired tasks",
+        xlabel="Improvement over Best Cost (%)",ylabel="Number of tasks",title="Quadratic assignment: $N binary variables",
+        xlims=(first(bins),last(bins)),ylims=(0,histogram_max+2),xformatter=x->@sprintf("%.1f",x),
+        legend=:topright,size=(850,400),guidefontsize=11,tickfontsize=10,margin=5Plots.mm)
+    vline!(p,[avg];color=:darkorange,lw=2,label=@sprintf("Group average: %.1f%%",avg))
+    if q1==q2
+        vline!(p,[q1];color=:purple,lw=2,linestyle=:dash,label=@sprintf("Median = Q1: %.1f%%",q1))
+    else
+        vline!(p,[q2];color=:purple,lw=2,label=@sprintf("Group median: %.1f%%",q2))
+        vline!(p,[q1];color=:gray,lw=2,linestyle=:dash,label=@sprintf("Q1: %.1f%%",q1))
+    end
+    vline!(p,[q3];color=:seagreen,lw=2,linestyle=:dash,label=@sprintf("Q3: %.1f%%",q3))
+    savefig(p,joinpath(out,"EELS_quadratic_distribution_$(N).pdf"))
+    savefig(p,joinpath(out,"EELS_quadratic_distribution_$(N).png"))
+end
+write_csv(joinpath(out,"distributions.csv"),distribution_rows)
 foreach(println,summaries)
 println("Saved ",out)
