@@ -55,11 +55,16 @@ def main(execute=False):
                         values = np.array([at_q(method, i) for i in range(1, 41)])
                         effect = 100 * (sa - values) / np.abs(sa)
                         avg, med = float(effect.mean()), float(np.median(effect))
+                        initial = np.array([float(indexed[(*g, method, i)]["initial"]) for i in range(1, 41)])
+                        sa_gain = float(np.mean(100 * (initial - sa) / np.abs(initial)))
+                        tt_gain = float(np.mean(100 * (initial - values) / np.abs(initial)))
                     else:
                         avg = med = ""
+                        sa_gain = tt_gain = ""
                     query_rows.append(dict(family=family, objective=objective, n=n, method=method,
                                            query_budget=q, supported_tasks=40 if supported else 0,
-                                           mean_pct=avg, median_pct=med))
+                                           mean_pct=avg, median_pct=med,
+                                           sa_mean_gain_pct=sa_gain,tt_mean_gain_pct=tt_gain))
     with (OUT / "query_diagnostic_100k.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(query_rows[0])); w.writeheader(); w.writerows(query_rows)
     rng = np.random.default_rng(20261013)
@@ -162,8 +167,14 @@ assumed; Holm correction remains valid under this dependence.
 
 **Learning curves:** compute `100 * (initial_best - incumbent) / abs(initial_best)`
 per task, then average equally across the 40 tasks. The exact union of logged
-improvement events is used with stepwise interpolation. Bands are **task SD**,
-not confidence intervals. Before the first event, the common initial best is
+improvement events is used with stepwise interpolation. Bands are **asymmetric
+pointwise 95% percentile-bootstrap confidence intervals for the mean** (2,000
+resamples of 40 tasks, fixed seed 20261014). The same task-resampling weights
+are used across event times and methods. They quantify uncertainty of the mean,
+not the spread of individual tasks, and are not simultaneous confidence bands.
+Unlike the former mean +/- SD bands, they cannot imply a negative gain when all
+observations are nonnegative. The mean curves themselves are unchanged.
+Task SD is retained in the exported tables and curves. Before the first event, the common initial best is
 used as a reference (not a claim that initial evaluation was instantaneous).
 
 **Evaluation-axis curves:** use measured cumulative call counts at each
@@ -269,10 +280,11 @@ query budget or changing objective cost could change the result. This table is
 descriptive, with no additional confirmatory tests or expensive-oracle claims.
 """)
     code('''query = read_csv("query_diagnostic_100k.csv")
-table(["Family", "Objective", "n", "Method", "Mean vs SA (%)", "Median (%)"],
+table(["Family", "Objective", "n", "Method", "Mean vs SA (%)", "Median (%)", "Mean gain: SA / TT (%)"],
       [[r['family'], r['objective'], r['n'], names[r['method']],
         f1(r['mean_pct']) if r['mean_pct'] else "Not reached by all 40 tasks",
-        f1(r['median_pct']) if r['median_pct'] else "—"] for r in query])''')
+        f1(r['median_pct']) if r['median_pct'] else "—",
+        f"{f1(r['sa_mean_gain_pct'])} / {f1(r['tt_mean_gain_pct'])}" if r['tt_mean_gain_pct'] else "—"] for r in query])''')
     md("""## All experimental groups
 
 Each size/objective section first summarizes exact call totals at all three
@@ -344,6 +356,49 @@ full-precision curve coordinates, PNG figures and the audit are in
 `examples/sa_cluster_analysis/`. The report does not modify the manuscript or
 older notebooks. Notebook tables render as HTML rather than LaTeX tabular.
 """)
+    md("""## Manuscript layout proposal (not inserted into the article)
+
+Use the 200-second trials for the manuscript. Keep families and objectives
+separate, and do not pool n = 10, 12, 14 into one average: the rank contrast
+would become harder to interpret.
+
+- **Main text:** two figures at the largest size n = 14. One has gain versus
+  time; the other has gain versus objective calls. Each is a 2-by-2 grid:
+  assignment above Set Partitioning, quadratic left and entropic right. Each
+  panel shows SA, EELS with data-initialized TT, and full-indicator TT.
+- **Appendix:** the same two figures for n = 10 and again for n = 12: four more
+  figures. Add the detailed protocol, endpoint tables, paired tests, call
+  volumes and actual-time overruns. The remaining 10/50-second plots can remain
+  in this notebook as supporting material rather than filling the article.
+
+This gives **six figures / 24 panels** for the complete 200-second comparison:
+two figures / eight panels in the main text, four figures / 16 panels in the
+appendix. Selecting the largest size is a transparent size-based layout choice,
+not selection of favorable outcomes. Each displayed point still averages 40
+tasks. The six figure files below are also saved as vector SVGs.
+
+Suggested claim: "In the recorded 200-second trajectories, the TT methods
+often attained a larger mean gain at the same number of objective evaluations
+on Set Partitioning, whereas informed SA was more effective under equal nominal
+wall-time budgets. On assignment the full-indicator TT showed query-efficiency
+advantages in some supported ranges at n = 10 and 12; the data-initialized EELS
+variant did not share that advantage at the 100,000-call diagnostic slice."
+
+Do not replace this by a universal fixed-query superiority claim. State the
+query range, the common 40-task support, and time-based SA cooling. A single
+curve crossing or a pointwise confidence band is not a paired significance test.
+The counts are full oracle calls including repetitions, not unique states or
+cost-delta operations. These results do not include an SA tuned to a fixed
+query budget or to an expensive objective.
+""")
+    for n in (14, 10, 12):
+        md(f"### {'Main-text candidate' if n == 14 else 'Appendix candidate'}: n = {n}, 200 seconds")
+        for axis in ("time", "calls"):
+            code(f'image("article_n{n}_{axis}.png")')
+    # Keep algorithm identifiers intact while matching the manuscript's TT
+    # terminology in all displayed prose, tables, and labels.
+    for cell in cells:
+        cell.source = cell.source.replace("MPS", "TT").replace("Full TT", "Full-indicator TT").replace("Data + EELS", "EELS (data TT)")
     nb.cells = cells
     nbf.write(nb, NOTEBOOK)
     if execute:

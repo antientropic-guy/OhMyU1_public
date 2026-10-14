@@ -103,6 +103,10 @@ AGENTS.md
 
 # New isolated, reproducible cluster experiment; retain its inputs and scripts.
 !/scripts/bash/run_SA_cluster.sh
+!/scripts/bash/run_SA_penalty.sh
+/data/sa_penalty_v1/results/logs/
+/data/sa_penalty_v1/results/*.jld2.lock/
+/data/sa_penalty_v1/**/*.pending
 /data/sa_cluster_v1/results/
 /data/sa_cluster_v1/smoke/
 /data/sa_cluster_v1/**/*.pending

@@ -1,6 +1,7 @@
 # Read-only scientific audit and plots for the completed cluster benchmark.
 # Run collect.jl first. No optimizer, input generation, or cluster submission.
-using JLD2, SparseArrays, LinearAlgebra, Statistics, SHA, Printf, HypothesisTests
+using JLD2, SparseArrays, LinearAlgebra, Statistics, SHA, Printf, HypothesisTests, Random
+BLAS.set_num_threads(1)
 ENV["GKSwstype"] = "100"
 using Plots, StatsPlots
 const ROOT = normpath(joinpath(@__DIR__, "..", ".."))
@@ -8,7 +9,7 @@ const INPUT = joinpath(ROOT,"data","sa_cluster_v2")
 const OUT = joinpath(ROOT,"examples","sa_cluster_analysis")
 mkpath(OUT)
 const METHODS = ["SA","U1_data_EELS","U1_full"]
-const LABELS = ["SA","Data + EELS","Full MPS"]
+const LABELS = ["SA","EELS (data TT)","Full-indicator TT"]
 const COLORS = [:steelblue, :darkorange, :seagreen]
 data = load(joinpath(INPUT,"results","combined.jld2"))
 results = data["results"]; protocols=data["protocols"]
@@ -107,11 +108,27 @@ end
 println("Audit and statistics complete. Plotting 36 groups and 12 budget summaries.");flush(stdout)
 default(fontfamily="sans-serif",titlefontsize=10,guidefontsize=9,tickfontsize=8,legendfontsize=8)
 fmt(x)=@sprintf("%.1f",x)
+# Paired task bootstrap, fixed resampling weights at all event times/methods.
+# Percentile intervals for the mean are nonnegative for nonnegative gains.
+# These are pointwise uncertainty intervals, not task SD or simultaneous bands.
+bootstrap_rng=MersenneTwister(20261014)
+bootstrap_weights=zeros(40,2000)
+for b in axes(bootstrap_weights,2), _ in 1:40
+    bootstrap_weights[rand(bootstrap_rng,1:40),b]+=1/40
+end
+function mean_interval(values)
+    means=values*bootstrap_weights
+    lo=[quantile(view(means,i,:),.025) for i in axes(means,1)]
+    hi=[quantile(view(means,i,:),.975) for i in axes(means,1)]
+    @assert minimum(lo)>=-1e-12
+    lo,hi
+end
+article_panels=Dict{Tuple{Int,String},Vector{Any}}()
 curveio=open(joinpath(OUT,"aggregate_curves.csv"),"w")
-println(curveio,"family,objective,n,budget,method,axis,x,mean_gain_pct,sd_gain_pct")
+println(curveio,"family,objective,n,budget,method,axis,x,mean_gain_pct,sd_gain_pct,ci_low_pct,ci_high_pct")
 for (f,o,n,b) in groups
     title="$(f=="assignment" ? "Assignment" : "Set Partitioning") | $o | n=$n | $(b)s | 40 tasks"
-    ptime=plot(title="Mean learning curve (band: task SD)",xlabel="Optimization time (s)",ylabel="Gain over initial best (%)",xlims=(0,b),yformatter=fmt,legend=:bottomright)
+    ptime=plot(title="Mean gain (pointwise 95% bootstrap CI)",xlabel="Optimization time (s)",ylabel="Gain over initial best (%)",xlims=(0,b),yformatter=fmt,legend=:bottomright)
     pcalls=plot(title="Learning per call (40 tasks on each curve)",xlabel="Objective calls (log scale)",ylabel="Gain over initial best (%)",xscale=:log10,yformatter=fmt,legend=false)
     pbar=plot(title="Final calls: mean +/- task SD",ylabel="Objective calls (log scale)",yscale=:log10,xticks=(1:3,LABELS),legend=false)
     pbox=plot(title="Paired improvement over SA",ylabel="Relative improvement (%)",xticks=(1:2,LABELS[2:3]),yformatter=fmt,legend=:bottomleft)
@@ -121,8 +138,9 @@ for (f,o,n,b) in groups
         # Exact union-of-event-time empirical step mean; no interpolation.
         vals=[gain(r,valat(r,t)) for t in times,r in g]
         av=vec(mean(vals;dims=2));sd=vec(std(vals;dims=2))
-        plot!(ptime,times,av;ribbon=sd,fillalpha=.09,color=COLORS[j],lw=2,label=LABELS[j],seriestype=:steppost)
-        for k in eachindex(times);println(curveio,join((f,o,n,b,m,"time",times[k],av[k],sd[k]),','));end
+        lo,hi=mean_interval(vals)
+        plot!(ptime,times,av;ribbon=(av.-lo,hi.-av),fillalpha=.13,color=COLORS[j],lw=2,label=LABELS[j],seriestype=:steppost)
+        for k in eachindex(times);println(curveio,join((f,o,n,b,m,"time",times[k],av[k],sd[k],lo[k],hi[k]),','));end
         # Every task within a method must have reached a query budget. Never
         # extrapolate terminal quality into an unobserved evaluation budget.
         commoncall=minimum(r["objective_calls"] for r in g)
@@ -130,9 +148,10 @@ for (f,o,n,b) in groups
         if commoncall>=lower
             xs=sort(unique(vcat([Float64(lower),Float64(commoncall)],[[Float64(c) for (c,_) in r["evaluation_history"] if lower<=c<=commoncall] for r in g]...)))
             v=[gain(r,valat(r,c;calls=true)) for c in xs,r in g];a=vec(mean(v;dims=2));s=vec(std(v;dims=2))
-            plot!(pcalls,xs,a;ribbon=s,fillalpha=.09,lw=2,color=COLORS[j],label=LABELS[j],seriestype=:steppost)
+            lo,hi=mean_interval(v)
+            plot!(pcalls,xs,a;ribbon=(a.-lo,hi.-a),fillalpha=.13,lw=2,color=COLORS[j],label=LABELS[j],seriestype=:steppost)
             scatter!(pcalls,[last(xs)],[last(a)];color=COLORS[j],markersize=3,label="")
-            for k in eachindex(xs);println(curveio,join((f,o,n,b,m,"calls",xs[k],a[k],s[k]),','));end
+            for k in eachindex(xs);println(curveio,join((f,o,n,b,m,"calls",xs[k],a[k],s[k],lo[k],hi[k]),','));end
         end
         c=[r["objective_calls"] for r in g]
         scatter!(pbar,[j],[mean(c)];yerror=[std(c)],color=COLORS[j],markersize=6,label="")
@@ -145,12 +164,26 @@ for (f,o,n,b) in groups
         end
     end
     hline!(pbox,[0.];color=:gray,linestyle=:dash,label="")
+    ylims!(ptime,(0,max(ylims(ptime)[2],.1)));ylims!(pcalls,(0,max(ylims(pcalls)[2],.1)))
+    if b==200
+        for (axis,panel) in (("time",ptime),("calls",pcalls))
+            compact=deepcopy(panel)
+            plot!(compact;title="$(f=="assignment" ? "Assignment" : "Set Partitioning"), $o",legend=:bottomright)
+            push!(get!(article_panels,(n,axis),Any[]),compact)
+        end
+    end
     fig=plot(ptime,pcalls,pbar,pbox;layout=(2,2),size=(1150,760),plot_title=title,margin=5Plots.mm)
     slug="$(f)_$(o)_n$(n)_$(b)s"
     savefig(fig,joinpath(OUT,slug*".png"))
     println(slug);flush(stdout)
 end
 close(curveio)
+for ((n,axis),panels) in article_panels
+    # Linear order: assignment quadratic/entropic, then partition quadratic/entropic.
+    fig=plot(panels...;layout=(2,2),size=(1150,750),margin=5Plots.mm,plot_title="n=$n | 200-second runs | mean and pointwise 95% bootstrap CI")
+    savefig(fig,joinpath(OUT,"article_n$(n)_$(axis).png"))
+    savefig(fig,joinpath(OUT,"article_n$(n)_$(axis).svg"))
+end
 for f in ("assignment","partition"),o in ("quadratic","entropic"),n in (10,12,14)
     p=plot(title="$f | $o | n=$n | mean +/- task SD",xlabel="Independent time budget (s)",ylabel="Final objective calls (log scale)",yscale=:log10,xticks=(1:3,["10","50","200"]),legend=:topleft,size=(800,380),margin=5Plots.mm)
     for (j,m) in enumerate(METHODS)

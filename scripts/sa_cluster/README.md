@@ -1,5 +1,9 @@
 # Isolated SA / MPS cluster benchmark
 
+For the additional generic bit-flip SA with a quadratic constraint penalty, see
+`PENALTY.md` and `scripts/bash/run_SA_penalty.sh`. Its results are stored separately
+under `data/sa_penalty_v1/results/`; it reuses this benchmark's frozen inputs.
+
 This experiment extends the original `SA_learning_diagnostics.ipynb` protocol.
 The older pilots are ignored by Git and are not dependencies of this directory.
 No cluster submission is made by preparing the data or running the toy tests.
