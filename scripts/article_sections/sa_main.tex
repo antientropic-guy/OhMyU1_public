@@ -1,0 +1,108 @@
+\subsection{Comparison with simulated annealing}
+\label{subsec:sa_comparison}
+We compare two symmetric-TT variants with two simulated annealing (SA)
+baselines on assignment and the low-rank strip Set Partitioning family.
+Each family and size $n\in\{10,12,14\}$ contains 40 paired instances with
+the same 400 initial feasible draws. Separate runs use 10, 50 and 200-second
+budgets on one CPU core per solver; both quadratic and entropic objectives
+are evaluated as black boxes. We show $n=14$, 200-second trajectories in
+\cref{fig:sa_time,fig:sa_calls}; the corresponding $n=10,12$ curves and
+complete protocol appear in \cref{app:sa_protocol}.
+
+\textbf{Information and model variants.} Data-initialized EELS builds a
+symmetric TT from the current selected data and expands its graph with
+$\gamma=1$. Full-indicator TT starts from the exact indicator of all feasible
+solutions. In this experiment EELS rebuilds its model, and full-indicator TT
+resets its amplitudes, at every outer iteration; this differs from the
+persistent-amplitude EELS--Best Cost comparison in
+\cref{subsec:eels_optimization}. Informed SA receives explicit
+feasibility-preserving moves. Penalty SA receives no such moves: it flips a
+random bit and minimizes $C(x)+\alpha\|Ax-b\|_2^2$ with a fixed scale-based
+choice of $\alpha$. EELS and penalty SA both use the constraints $A,b$ and
+the initial data, but exploit them differently: EELS enforces feasibility
+structurally, whereas penalty SA explores infeasible points. This is a closer
+information comparison than informed SA, not an assertion of identical
+algorithmic prior knowledge. Full-indicator construction likewise uses
+additional problem structure.
+
+\textbf{Finite-time quality.} EELS outperforms the tested penalty-SA
+configuration in every 200-second group in mean paired final quality;
+all twelve one-sided comparisons remain significant after Holm correction
+over the 72 TT-versus-penalty comparisons across sizes, objectives and budgets
+(\cref{tab:sa_penalty_tests}). Penalty SA does improve its initial feasible
+best in 630 of 1,440 runs, including improvements in all twelve 200-second
+groups, but is substantially less effective within these budgets. This
+conclusion concerns the specified penalty, single-bit proposal and cooling
+schedule; it does not establish superiority over optimally tuned or adaptive
+penalty methods.
+
+The EELS curves typically gain quickly and then plateau, whereas penalty SA
+continues to make slower gains on the displayed horizon. This is consistent
+with EELS acting as a rapid intensification step on data-defined support.
+A flat incumbent curve does not prove a local optimum, and an improving
+mean does not establish that individual SA chains never stagnate. A possible
+hybrid would supply feasible solutions from SA to a subsequent EELS stage.
+Such complementarity is motivated by the SA-seeded TN-GEO booster studied
+by \citet{Alcazar2024}, but the proposed SA--EELS hybrid is not tested here.
+
+\textbf{Rank and informed SA.} On assignment, informed SA has better final
+cost on average in every group, with no individual TT wins (some ties).
+Its transpositions encode
+the permutation structure directly, while EELS receives no feasible-move
+oracle. Full-indicator TT approaches informed SA at $n=10$, but loses more
+at larger sizes. Its exact maximum rank grows from 461 to 1,715 to 6,434;
+construction and training overhead are consistent with reduced search
+throughput. The present comparison does not isolate rank from size,
+objective landscape or reset behavior, so it is not a causal timing study.
+On low-rank Set Partitioning, the TT endpoints are much closer to informed
+SA, particularly for the entropic objective, with many paired ties and
+some TT wins. Neither TT variant has a Holm-significant advantage over
+informed SA; failure to reject a difference is not an equivalence result.
+Thus the observed rank contrast explains a plausible computational mechanism,
+not a universal ordering of optimizers.
+
+\textbf{Objective-query efficiency.} The evaluation-axis curves tell a
+different story from wall time. On Set Partitioning the TT methods commonly
+reach comparable mean gains with far fewer objective calls; for example,
+in the $n=14$ entropic 200-second runs, informed SA averages 58.3 million
+calls versus 0.66 million for EELS and 0.54 million for full-indicator TT.
+Both TT variants also have higher mean gains than informed SA at the
+100,000-call slice on every Set Partitioning group of the 200-second runs.
+Full-indicator TT has this advantage on assignment at $n=10,12$, while
+EELS does not. These are descriptive slices of time-limited trajectories:
+SA cooling depends on elapsed time, and every curve is truncated to a query
+range reached by all 40 tasks. They neither constitute a separately tuned
+equal-query experiment nor guarantee a wall-time advantage for expensive
+objectives. All calls, including repeats and infeasible penalty-SA queries,
+are counted; no solver receives incremental objective updates.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.96\textwidth]{pictures/SA_n14_time.pdf}
+\caption{Mean feasible-objective gain versus optimization time at $n=14$
+($N=196$), with 40 paired tasks per panel and a 200-second nominal budget.
+Top: assignment; bottom: spatial Set Partitioning. Left: quadratic cost;
+right: entropic risk. Gain is $100(C_0-C_{\mathrm{best}})/|C_0|$ per task,
+then averaged. Shading gives pointwise asymmetric 95\% bootstrap intervals
+for the mean, not task standard deviations. The same initial data are used
+by all four methods; penalized or infeasible costs never enter the ordinate.
+EELS and full-indicator TT use the reset/rebuild protocol described in
+\cref{app:sa_protocol}, not persistent-amplitude training.}
+\label{fig:sa_time}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.96\textwidth]{pictures/SA_n14_calls.pdf}
+\caption{The same $n=14$, 200-second runs as \cref{fig:sa_time}, plotted
+against cumulative objective calls (logarithmic axis). Calls include the
+initial evaluations, duplicates, and infeasible penalty-SA points.
+Each method stops at the smallest final call count among its 40 tasks
+(endpoint marker); no stopped trajectory is extrapolated. Comparisons
+are meaningful only on overlapping query ranges. Confidence intervals and
+gain normalization match \cref{fig:sa_time}. These curves describe
+query efficiency under time-based cooling, rather than a fixed-query
+benchmark.}
+\label{fig:sa_calls}
+\end{figure*}
+

@@ -1,0 +1,94 @@
+\section{Set Partitioning construction and ADD transfer protocol}
+\label{app:partition_protocol}
+\paragraph{Locality grid.}
+Let $m$ ordered elements and $N=n^2$ candidate tiles define $A\in\{0,1\}^{m\times N}$
+and $b=\mathbf1$. All $m$ singletons are included. The remaining $N-m$ columns
+are divided between tile sizes 2, 3 and 4 in proportions $62:88:57$, using
+largest-remainder rounding to obtain integer counts summing to $N-m$.
+All $m-1$ adjacent pairs are mandatory and count toward the size-two quota.
+The other distinct tiles of each size are sampled uniformly without replacement
+from subsets satisfying $\max S-\min S+1\leq w$. No objective value is used
+in generating the constraints. Columns are sorted by
+$(\min S,\mathbf1_{|S|=1},\operatorname{Tuple}(S))$; thus a singleton is
+processed after the other tiles starting at that element. This order is fixed
+by construction, not optimized separately for individual outcomes.
+All 63 parameter cells and their 15 instances have equal representation.
+
+\paragraph{Exact feasible sampling.}
+For a set $U$ of already covered elements, let $F(U)$ count its completions.
+Set $F(\{1,\ldots,m\})=1$. Otherwise let $u$ be the first uncovered element and use
+\begin{equation}
+F(U)=\sum_{j:\ u\in S_j,\,S_j\cap U=\varnothing}F(U\cup S_j).
+\label{eq:partition_counting}
+\end{equation}
+Memoization uses arbitrary-precision integer counts. Select a permissible tile
+with probability $F(U\cup S_j)/F(U)$ and repeat. Every exact cover has one path
+under the first-uncovered-element rule; the product of its transition
+probabilities is $1/F(\varnothing)$. Consequently each draw is exactly uniform
+on feasible bitstrings, with replacement. Integer rejection sampling realizes
+the choices without rounding large counts to floating point. Singletons ensure
+that at least one cover exists. The frozen inputs store 500 initial draws,
+independent objective arrays and seed metadata. The rerun verifies manifest
+hashes and $AX=b$; each external batch is checked again, and its fingerprint
+must agree across the paired solver arms.
+
+\paragraph{Exact ranks.}
+For each cut, enumerate disjoint prefix covers that admit a suffix completion.
+Under singleton-last ordering, an uncovered element can be discarded only
+when its singleton has been processed; the remaining constraints form an
+active frontier. Distinct residual charges have disjoint suffix supports.
+Each nonempty block of the indicator unfolding is an all-ones rectangle of
+rank one, so its exact TT rank is the number of retained residual charges.
+Counting paths gives $F(\varnothing)$, independently of the sampler recurrence.
+The frontier occupies at most $w$ consecutive positions, giving a loose
+$2^w$ bound on its binary coverage states. This limits rank without limiting
+the total number of paths to a comparable magnitude. Maximum and mean ranks
+refer to the $N-1$ internal cuts. Table~\ref{tab:partition_ranks} pools all 135
+instances for each $w$; the reported SD includes variation across $(m,n)$ cells
+as well as their instances, and is not a standard error.
+
+% PARTITION_RANK_TABLE
+
+\paragraph{Frozen transfer configuration.}
+We transfer Best Cost + GDF with $w_{\mathrm{filter}}=0.4$, the shared
+assignment-selected choice, to the entropic objective in
+\cref{eq:partition_entropic}. Both arms start from the same 500 feasible draws
+and use 15 outer iterations, one training sweep at learning rate 0.05,
+charge degeneracy one, 5,000 TT samples and 5,000 independent exact-uniform
+external draws per iteration. Five percent of the initial distinct training
+size is retained as an elite, with a minimum of one point; no worst-point
+retention is used. The model is rebuilt from selected data each iteration,
+without EELS. Boltzmann temperature is the standard deviation of current
+training costs, with uniform weights when it is zero. The table sampling
+backend is explicit. External RNG streams are matched by instance and iteration
+and separate from model sampling; matching seeds do not imply identical
+TT samples after the distributions diverge. The incumbent includes every
+evaluated candidate, including the last external batch. Graph-history
+diagnostics record the fraction of externally drawn solutions with zero
+novelty. Thus the experiment transfers a rule and weight while preserving
+the earlier locality budgets, not every assignment-tuning budget.
+
+There are 945 pairs, or 1,890 solver runs. Four Slurm allocations each execute
+32 isolated one-core processes, with one BLAS thread and private per-instance
+checkpoints. Current code fingerprints select an output directory distinct
+from older results. The original inputs are reused, and their previous
+exploratory inspection is not described as a newly untouched evaluation.
+Rank-dependent improvement remains to be established by this corrected-code
+rerun: small-rank equality and large-rank superiority are hypotheses, not
+conditions for reporting the outcomes. Pooling by $w$ should be accompanied by
+the 63 cell-level summaries; locality changes more than rank alone.
+
+\paragraph{Separate strip family used for SA.}
+The completed SA comparison instead uses $N=n^2$ tiles on a $3\times n$ strip
+of $m=3n$ cells. Candidate tiles are connected sets of one to four cells spanning
+at most three strip columns. Singletons and a domino spanning tree (all vertical
+edges and the horizontal edges along the top row) are mandatory. Remaining
+tiles are sampled without replacement with weight $\exp[-2(|S|-2)]$, until
+there are $N$ distinct tiles. The frozen benchmark restores spatial cell labels
+and uses the same singleton-last variable order as above, consistently
+permuting the entropic objective arrays. There is no variable-order search.
+This construction is a deliberately low-rank contrast to row-major assignment,
+not a sample from the adjustable-$w$ grid. The full-indicator ranks are counted
+from feasible prefix charges; exact covers are sampled using
+\cref{eq:partition_counting}.
+

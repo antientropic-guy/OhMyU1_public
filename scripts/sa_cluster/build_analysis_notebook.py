@@ -30,13 +30,17 @@ def main(execute=False):
     summaries = load("group_summary.csv")
     with (ROOT / "data/sa_cluster_v2/results/summary.csv").open() as f:
         raw = list(csv.DictReader(f))
+    with (ROOT / "data/sa_penalty_v1/results/summary.csv").open() as f:
+        penalty_raw = list(csv.DictReader(f))
+    raw.extend(penalty_raw)
     indexed = {(r["family"], r["objective"], int(r["n"]), int(r["budget"]), r["method"], int(r["instance"])): r for r in raw}
     histories = defaultdict(list)
-    with (ROOT / "data/sa_cluster_v2/results/curves.csv").open() as f:
-        for r in csv.DictReader(f):
-            if int(r["budget"]) == 200:
-                key = (r["family"], r["objective"], int(r["n"]), 200, r["method"], int(r["instance"]))
-                histories[key].append((int(r["calls"]), float(r["best"])))
+    for folder in ("sa_cluster_v2", "sa_penalty_v1"):
+        with (ROOT / "data" / folder / "results/curves.csv").open() as f:
+            for r in csv.DictReader(f):
+                if int(r["budget"]) == 200:
+                    key = (r["family"], r["objective"], int(r["n"]), 200, r["method"], int(r["instance"]))
+                    histories[key].append((int(r["calls"]), float(r["best"])))
     query_rows = []
     q = 100000
     for family in ("assignment", "partition"):
@@ -49,7 +53,7 @@ def main(execute=False):
                     assert int(indexed[key]["calls"]) >= q
                     return h[bisect_right([c for c, _ in h], q) - 1][1]
                 sa = np.array([at_q("SA", i) for i in range(1, 41)])
-                for method in ("U1_data_EELS", "U1_full"):
+                for method in ("U1_data_EELS", "U1_full", "SA_penalty"):
                     supported = all(int(indexed[(*g, method, i)]["calls"]) >= q for i in range(1, 41))
                     if supported:
                         values = np.array([at_q(method, i) for i in range(1, 41)])
@@ -79,9 +83,10 @@ def main(execute=False):
     with (OUT / "paired_comparisons_ci.csv").open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(pairs[0])); w.writeheader(); w.writerows(pairs)
 
-    positive = [p for p in pairs if float(p["mean_pct"]) > 1e-8]
-    significant = [p for p in pairs if float(p["p_holm72"]) < .05]
-    ratios = [float(p["calls_ratio"]) for p in pairs]
+    tt_pairs = [p for p in pairs if p["method"] != "SA_penalty"]
+    positive = [p for p in tt_pairs if float(p["mean_pct"]) > 1e-8]
+    significant = [p for p in tt_pairs if float(p["p_holm108"]) < .05]
+    ratios = [float(p["calls_ratio"]) for p in tt_pairs]
     nb = nbf.v4.new_notebook()
     nb.metadata.kernelspec = dict(display_name="Python 3", language="python", name="python3")
     cells = []
@@ -89,15 +94,17 @@ def main(execute=False):
     def code(s): cells.append(nbf.v4.new_code_cell(s))
     md("""# SA and OhMyU1: complete cluster comparison
 
-This report analyzes all **4,320 saved runs**, without rerunning any optimizer.
+This report analyzes all **5,760 saved runs**, without rerunning any optimizer:
+4,320 original runs and 1,440 additional penalty-SA runs on the same frozen inputs.
 There are 40 paired instances in each family/size group, two objectives,
-three independent time budgets (10, 50, 200 seconds), and three methods.
+three independent time budgets (10, 50, 200 seconds), and four methods.
 The 36 experimental groups are reported separately below. Earlier pilot results
 and notebooks are retained. Figures are generated with Julia/Plots/StatsPlots.
 
 **This is the original reset/rebuild diagnostic protocol. It is not the later
-persistent-amplitude EELS experiment.** SA has feasibility-preserving moves;
-there is no feasibility-oracle-only SA in this dataset.
+persistent-amplitude EELS experiment.** Informed SA has feasibility-preserving
+moves; penalty SA uses generic single-bit flips and a scalar constraint penalty.
+There is no feasibility-oracle-only SA in this dataset.
 """)
     code('''from pathlib import Path
 import csv, html
@@ -113,7 +120,7 @@ summary = read_csv("group_summary.csv")
 paired = read_csv("paired_comparisons_ci.csv")
 with (root / "data/sa_cluster_v2/results/summary.csv").open() as f:
     raw_summary = list(csv.DictReader(f))
-names = {"SA": "SA", "U1_data_EELS": "Data + EELS", "U1_full": "Full MPS"}
+names = {"SA": "SA (feasible moves)", "U1_data_EELS": "Data + EELS", "U1_full": "Full MPS", "SA_penalty": "SA (penalty)"}
 def f1(x):
     value = float(x)
     return f"{0.0 if abs(value) < 0.05 else value:.1f}"
@@ -195,19 +202,61 @@ adapter count are excluded. The saved logs do not record a continuous call rate;
 we therefore show exact final counts versus independent time budget, rather
 than fabricate a calls-versus-time trajectory.
 
-**Paired comparisons:** positive `100 * (SA - MPS) / abs(SA)` favors MPS.
+**Paired comparisons:** positive `100 * (informed_SA - candidate) / abs(informed_SA)`
+favors the candidate (either TT variant or penalty SA).
 Boxes use 1.5 IQR whiskers and include outliers; diamonds are group averages and
 purple marks are group medians, calculated from the same 40 values. Percentages
 are displayed to one decimal place; CSV data retain full precision.
 """)
+    md("""### Additional baseline: SA with a quadratic constraint penalty
+
+Penalty SA minimizes `f(x) + alpha * ||A*x-b||^2` over binary vectors using
+one uniformly chosen bit flip per proposal. No feasibility-preserving moves,
+repair, or assignment/partition move catalogue is supplied. The scalar residual
+is more informative than a yes/no feasibility oracle; this is not an experiment
+with identical information access across methods.
+
+The same 400 initial feasible draws, ten chains from the best ten distinct
+initial points, budgets, and single-thread settings are retained. Let
+`scale = max(range(initial costs), std(initial costs),
+1e-8 * max(1, max(abs(initial costs))))`. We fix `alpha = 10 * scale`.
+Each chain cools geometrically from
+`max(std(initial costs), alpha * v / log(2))` to
+`max(0.001 * std(initial costs), 1e-10 * scale)`, where `v` is the median
+positive squared column norm of A. The higher starting temperature allows
+temporary constraint violations. This is a fixed scale-based setting, not a
+tuned optimum or a global exact-penalty guarantee.
+
+All plots and quality tables use the **best feasible raw objective**, initialized
+at the common initial best. Penalized values and infeasible improvements never
+count as gains. Objective counts include evaluations on infeasible points,
+duplicates and Optim's repeated calls. Penalty evaluation and setup are timed.
+Feasible-call counts do not count distinct solutions: revisiting a feasible
+state is counted again. The new purple curve is included even in groups with
+no improvement, to preserve the same four-method comparison throughout.
+The penalty run does not change either TT method's historical reset protocol.
+""")
+    improved = sum(float(r["final"]) < float(r["initial"]) for r in penalty_raw)
+    md(f"Penalty SA improved the initial feasible best in **{improved} / {len(penalty_raw)} runs**. "
+       "The table below separates the independent budgets; gains are averaged over all 40 tasks, including unsuccessful runs.")
+    md("At 200 seconds, penalty SA improves in every family/objective/size group, "
+       "with mean gains over the initial best ranging from **6.2% to 46.1%**. "
+       "Nevertheless, its final feasible cost is worse than informed SA in all "
+       "1,440 paired runs. Both TT methods have a positive mean paired improvement "
+       "over penalty SA in all twelve 200-second groups. These descriptive results "
+       "depend on this particular penalty scale, proposal and cooling schedule; "
+       "they do not establish superiority over all penalty-based SA configurations.")
+    code('''table(["Family", "Objective", "n", "s", "Mean gain (%)", "Median gain (%)", "Mean objective calls"],
+      [[r['family'], r['objective'], r['n'], r['budget'], f1(r['mean_gain_pct']), f1(r['median_gain_pct']), integer(r['mean_calls'])]
+       for r in summary if r['method']=="SA_penalty"])''')
     md("""## Statistical procedure
 
 As in the earlier A/B analyses, the paired one-sided Wilcoxon signed-rank test
-uses the **raw objective difference** SA minus MPS (alternative: MPS is better).
-Raw p-values are accompanied by Holm adjustment over all 72 comparisons
-(36 groups times two MPS methods). Two-sided p-values and their separate Holm
+uses the **raw objective difference** informed SA minus candidate (alternative:
+the candidate is better). Raw p-values are accompanied by Holm adjustment over
+all 108 comparisons (36 groups times three candidates). Two-sided p-values and their separate Holm
 adjustment are also exported, allowing detection of either direction.
-Only differences below `1e-9 + 1e-11 * max(abs(SA), abs(MPS))` are treated as
+Only differences below `1e-9 + 1e-11 * max(abs(SA), abs(candidate))` are treated as
 numerical ties. This avoids interpreting floating-point summation noise as a win.
 The test concerns paired location differences, not specifically the mean.
 
@@ -223,12 +272,16 @@ costs are therefore also tabulated. These ratios are not optimality gaps.
 
 At equal nominal time budgets, there are **{len(significant)} / 72**
 Holm-significant improvements over SA.
+The denominator here covers the two TT methods; Holm adjustment includes all
+108 tests, including the additional 36 penalty-SA comparisons.
 Only **{len(positive)} / 72** group/method comparisons have a positive mean
 beyond numerical noise. The ratio of mean SA calls to mean MPS calls ranges
 from **{min(ratios):.1f} to {max(ratios):.1f}** across these comparisons.
 The largest ratio includes full assignment runs that did not advance beyond
 their initial data; it must not be interpreted as useful query efficiency.
-No one-sided raw p-value is below 0.05 either.
+No one-sided raw p-value for a TT method is below 0.05 either. In these findings,
+SA denotes the original informed baseline; penalty-SA outcomes are reported
+separately above and included in all plots and paired tables.
 
 - **Assignment:** neither MPS variant has a task-level win over SA in these
   runs. Full MPS approaches SA at n = 10 as time increases, but remains worse
@@ -249,9 +302,9 @@ No one-sided raw p-value is below 0.05 either.
   reset/rebuild MPS protocol. They do not test persistent training, isolate the
   effect of EELS against a no-EELS MPS, or establish a universal solver ranking.
 """)
-    code('''table(["Family", "Objective", "n", "s", "Method", "Mean vs SA (%)", "Median (%)", "W/T/L", "Holm p", "SA/MPS calls"],
+    code('''table(["Family", "Objective", "n", "s", "Method", "Mean vs SA (%)", "Median (%)", "W/T/L", "Holm p", "SA/candidate calls"],
       [[r['family'], r['objective'], r['n'], r['budget'], names[r['method']], f1(r['mean_pct']), f1(r['median_pct']),
-        f"{r['wins']}/{r['ties']}/{r['losses']}", sci(r['p_holm72']), f1(r['calls_ratio'])] for r in paired])''')
+        f"{r['wins']}/{r['ties']}/{r['losses']}", sci(r['p_holm108']), f1(r['calls_ratio'])] for r in paired])''')
     md("""### Longest budget: query volume and stagnation
 
 At 200 seconds all methods have time to perform search. The table below shows
@@ -280,7 +333,7 @@ query budget or changing objective cost could change the result. This table is
 descriptive, with no additional confirmatory tests or expensive-oracle claims.
 """)
     code('''query = read_csv("query_diagnostic_100k.csv")
-table(["Family", "Objective", "n", "Method", "Mean vs SA (%)", "Median (%)", "Mean gain: SA / TT (%)"],
+table(["Family", "Objective", "n", "Method", "Mean vs SA (%)", "Median (%)", "Mean gain: SA / candidate (%)"],
       [[r['family'], r['objective'], r['n'], names[r['method']],
         f1(r['mean_pct']) if r['mean_pct'] else "Not reached by all 40 tasks",
         f1(r['median_pct']) if r['median_pct'] else "—",
@@ -308,16 +361,16 @@ table(["Method", "Final cost: mean ± SD", "Gain: mean / median (%)", "Calls: me
       [[names[r['method']], f"{{float(r['mean_final']):.4f}} ± {{float(r['sd_final']):.4f}}", f"{{f1(r['mean_gain_pct'])}} / {{f1(r['median_gain_pct'])}}",
         f"{{integer(r['mean_calls'])}} ± {{integer(r['sd_calls'])}}", f"{{f1(r['mean_seconds'])}} / {{f1(r['max_seconds'])}}", f1(r['mean_iterations']), r['zero_iterations'], r['overrun_5pct'], f1(r['mean_initialization_s'])] for r in g])
 p = select(paired, "{family}", "{objective}", {n}, {budget})
-table(["Method", "Mean vs SA (%)", "Median (%)", "Mean 95% bootstrap CI (%)", "W/T/L", "Raw p", "Holm p", "SA/MPS calls"],
+table(["Method", "Mean vs SA (%)", "Median (%)", "Mean 95% bootstrap CI (%)", "W/T/L", "Raw p", "Holm p", "SA/candidate calls"],
       [[names[r['method']], f1(r['mean_pct']), f1(r['median_pct']), f"[{{f1(r['mean_ci_low'])}}, {{f1(r['mean_ci_high'])}}]",
-        f"{{r['wins']}}/{{r['ties']}}/{{r['losses']}}", sci(r['p_raw']), sci(r['p_holm72']), f1(r['calls_ratio'])] for r in p])''')
+        f"{{r['wins']}}/{{r['ties']}}/{{r['losses']}}", sci(r['p_raw']), sci(r['p_holm108']), f1(r['calls_ratio'])] for r in p])''')
                     ps = [p for p in pairs if p["family"] == family and p["objective"] == objective and int(p["n"]) == n and int(p["budget"]) == budget]
                     fragments = []
                     for p in ps:
-                        method = "Data + EELS" if p["method"] == "U1_data_EELS" else "Full MPS"
+                        method = {"U1_data_EELS": "Data + EELS", "U1_full": "Full MPS", "SA_penalty": "SA (penalty)"}[p["method"]]
                         mean = float(p["mean_pct"])
                         fragments.append(f"{method}: mean relative difference {0.0 if abs(mean)<.05 else mean:.1f}%, with {p['wins']} wins, {p['ties']} ties, and {p['losses']} losses.")
-                    md(" ".join(fragments) + " A positive number favors MPS. " + ("At least one advantage passes the Holm correction." if any(float(p["p_holm72"]) < .05 for p in ps) else "Neither method shows a Holm-significant advantage over SA in this group."))
+                    md(" ".join(fragments) + " A positive number favors the candidate over informed SA. " + ("At least one advantage passes the Holm correction." if any(float(p["p_holm108"]) < .05 for p in ps) else "No candidate shows a Holm-significant advantage over SA in this group."))
     md("""## Timing, memory and limits of interpretation
 
 Allocated bytes (exported in the CSV) accumulate all allocations and are not peak
@@ -347,11 +400,13 @@ From the repository root, without rerunning optimization:
 
 ```text
 julia --project=. scripts/sa_cluster/collect.jl
+julia --project=. scripts/sa_cluster/collect_penalty.jl
 julia --project=. --threads=1,0 scripts/sa_cluster/analyze.jl
 python scripts/sa_cluster/build_analysis_notebook.py --execute
 ```
 
-Raw results remain in `data/sa_cluster_v2/results/`. Aggregated tables,
+Raw results remain in `data/sa_cluster_v2/results/` and
+`data/sa_penalty_v1/results/`. Aggregated tables,
 full-precision curve coordinates, PNG figures and the audit are in
 `examples/sa_cluster_analysis/`. The report does not modify the manuscript or
 older notebooks. Notebook tables render as HTML rather than LaTeX tabular.
@@ -365,7 +420,7 @@ would become harder to interpret.
 - **Main text:** two figures at the largest size n = 14. One has gain versus
   time; the other has gain versus objective calls. Each is a 2-by-2 grid:
   assignment above Set Partitioning, quadratic left and entropic right. Each
-  panel shows SA, EELS with data-initialized TT, and full-indicator TT.
+  panel shows informed SA, penalty SA, EELS with data-initialized TT, and full-indicator TT.
 - **Appendix:** the same two figures for n = 10 and again for n = 12: four more
   figures. Add the detailed protocol, endpoint tables, paired tests, call
   volumes and actual-time overruns. The remaining 10/50-second plots can remain

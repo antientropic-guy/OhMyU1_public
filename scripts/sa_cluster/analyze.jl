@@ -8,18 +8,26 @@ const ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 const INPUT = joinpath(ROOT,"data","sa_cluster_v2")
 const OUT = joinpath(ROOT,"examples","sa_cluster_analysis")
 mkpath(OUT)
-const METHODS = ["SA","U1_data_EELS","U1_full"]
-const LABELS = ["SA","EELS (data TT)","Full-indicator TT"]
-const COLORS = [:steelblue, :darkorange, :seagreen]
+const METHODS = ["SA","U1_data_EELS","U1_full","SA_penalty"]
+const LABELS = ["SA (feasible moves)","EELS (data TT)","Full-indicator TT","SA (penalty)"]
+const COLORS = [:steelblue, :darkorange, :seagreen, :purple]
 data = load(joinpath(INPUT,"results","combined.jld2"))
 results = data["results"]; protocols=data["protocols"]
 @assert length(results)==4320 && length(protocols)==128
+penalty = load(joinpath(ROOT,"data","sa_penalty_v1","results","combined.jld2"))
+@assert length(penalty["results"])==1440 && length(penalty["protocols"])==128
+@assert isempty(intersect(keys(results),keys(penalty["results"])))
+merge!(results,penalty["results"])
 manifest=load(joinpath(INPUT,"manifest.jld2"),"manifest")
 records=Dict((e.family,e.n,e.instance)=>load(joinpath(INPUT,"inputs",e.file),"record") for e in manifest.records)
 for e in manifest.records
     @assert bytes2hex(sha256(read(joinpath(INPUT,"inputs",e.file))))==e.sha256
 end
 manifest_hash=bytes2hex(sha256(read(joinpath(INPUT,"manifest.jld2"))))
+for p in values(penalty["protocols"])
+    @assert p.manifest_sha256==manifest_hash && p.initial_samples==400 && p.sa_chains==10
+    @assert p.proposal=="one uniform binary bit flip" && p.budgets==[10,50,200]
+end
 for p in values(protocols)
     @assert p.manifest_sha256==manifest_hash
     @assert p.initial_samples==400 && p.mps_samples==10000 && p.elite_count==400
@@ -57,9 +65,14 @@ for ((family,n,i,o,b,m),r) in results
     @assert r["hardware"].julia_threads==1 && r["hardware"].blas_threads==1
     push!(hardware,string(r["hardware"].cpu_model))
     @assert abs(r["initial_c_min"])>1e-10 && abs(r["c_min"])>1e-10
+    if m=="SA_penalty"
+        @assert r["feasible_calls"]+r["infeasible_calls"]==r["objective_calls"]
+        @assert r["objective_calls"]==400+r["penalty_queries"]
+        @assert last(r["call_checkpoints"])[2]==r["objective_calls"]
+    end
 end
 open(joinpath(OUT,"audit.md"),"w") do io
-    println(io,"All 128 shards and 4,320 runs are complete. All 240 input hashes, paired initial costs, final binary feasibility, recomputed final objective values, monotone histories, deadline-filtered incumbents, and single-thread settings passed validation.")
+    println(io,"All 256 shards and 5,760 runs (including 1,440 penalty-SA runs) are complete. All 240 input hashes, paired initial costs, final binary feasibility, recomputed final objective values, monotone histories, deadline-filtered incumbents, and single-thread settings passed validation. Penalty-SA feasible/infeasible call counters reconcile exactly. All quality curves use feasible raw objective values, never penalized costs.")
     println(io,"\nHardware: ",join(sort(collect(hardware)),"; "),". Julia ",first(values(protocols)).julia_version,"; Optim ",first(values(protocols)).optim_version,". These are downloaded cluster runs, not local optimization runs.")
     println(io,"\nSaved source fingerprints differing from the current checkout: ",isempty(source_mismatches) ? "none" : join(sort(source_mismatches),", "),".")
     println(io,"\nFiles with only Windows/Linux line-ending differences: ",length(newline_only),". Line endings were normalized solely for this provenance comparison.")
@@ -96,12 +109,12 @@ function holm!(rows,key,outkey)
         prev=max(prev,min(1.,(length(rows)-j+1)*rows[k][key]));rows[k][outkey]=prev
     end
 end
-holm!(paired,"p_raw","p_holm72");holm!(paired,"p_two_sided","p_two_holm72")
+holm!(paired,"p_raw","p_holm108");holm!(paired,"p_two_sided","p_two_holm108")
 open(joinpath(OUT,"group_summary.csv"),"w") do io
     println(io,"family,objective,n,budget,method,mean_final,sd_final,mean_gain_pct,median_gain_pct,sd_gain_pct,mean_calls,sd_calls,min_calls,max_calls,mean_seconds,max_seconds,mean_iterations,zero_iterations,mean_initialization_s,mean_last_improvement_s,overrun_5pct,mean_allocated_bytes")
     foreach(r->println(io,join(r,',')),summary)
 end
-headers=["family","objective","n","budget","method","mean_pct","median_pct","sd_pct","wins","ties","losses","p_raw","p_holm72","p_two_sided","p_two_holm72","calls_ratio"]
+headers=["family","objective","n","budget","method","mean_pct","median_pct","sd_pct","wins","ties","losses","p_raw","p_holm108","p_two_sided","p_two_holm108","calls_ratio"]
 open(joinpath(OUT,"paired_comparisons.csv"),"w") do io
     println(io,join(headers,','));foreach(r->println(io,join([r[h] for h in headers],',')),paired)
 end
@@ -128,10 +141,10 @@ curveio=open(joinpath(OUT,"aggregate_curves.csv"),"w")
 println(curveio,"family,objective,n,budget,method,axis,x,mean_gain_pct,sd_gain_pct,ci_low_pct,ci_high_pct")
 for (f,o,n,b) in groups
     title="$(f=="assignment" ? "Assignment" : "Set Partitioning") | $o | n=$n | $(b)s | 40 tasks"
-    ptime=plot(title="Mean gain (pointwise 95% bootstrap CI)",xlabel="Optimization time (s)",ylabel="Gain over initial best (%)",xlims=(0,b),yformatter=fmt,legend=:bottomright)
+    ptime=plot(title="Mean gain (pointwise 95% bootstrap CI)",xlabel="Optimization time (s)",ylabel="Gain over initial best (%)",xlims=(0,b),yformatter=fmt,legend=:topright,legend_columns=2)
     pcalls=plot(title="Learning per call (40 tasks on each curve)",xlabel="Objective calls (log scale)",ylabel="Gain over initial best (%)",xscale=:log10,yformatter=fmt,legend=false)
-    pbar=plot(title="Final calls: mean +/- task SD",ylabel="Objective calls (log scale)",yscale=:log10,xticks=(1:3,LABELS),legend=false)
-    pbox=plot(title="Paired improvement over SA",ylabel="Relative improvement (%)",xticks=(1:2,LABELS[2:3]),yformatter=fmt,legend=:bottomleft)
+    pbar=plot(title="Final calls: mean +/- task SD",ylabel="Objective calls (log scale)",yscale=:log10,xticks=(1:4,LABELS),legend=false)
+    pbox=plot(title="Paired improvement over informed SA",ylabel="Relative improvement (%)",xticks=(1:3,LABELS[2:4]),yformatter=fmt,legend=:bottomleft)
     for (j,m) in enumerate(METHODS)
         g=group(f,o,n,b,m)
         times=sort(unique(vcat([0.,Float64(b)],[first.(r["history"]) for r in g]...)))
@@ -164,15 +177,15 @@ for (f,o,n,b) in groups
         end
     end
     hline!(pbox,[0.];color=:gray,linestyle=:dash,label="")
-    ylims!(ptime,(0,max(ylims(ptime)[2],.1)));ylims!(pcalls,(0,max(ylims(pcalls)[2],.1)))
+    ylims!(ptime,(0,max(1.35ylims(ptime)[2],.1)));ylims!(pcalls,(0,max(1.35ylims(pcalls)[2],.1)))
     if b==200
         for (axis,panel) in (("time",ptime),("calls",pcalls))
             compact=deepcopy(panel)
-            plot!(compact;title="$(f=="assignment" ? "Assignment" : "Set Partitioning"), $o",legend=:bottomright)
+            plot!(compact;title="$(f=="assignment" ? "Assignment" : "Set Partitioning"), $o",legend=:topright,legend_columns=2)
             push!(get!(article_panels,(n,axis),Any[]),compact)
         end
     end
-    fig=plot(ptime,pcalls,pbar,pbox;layout=(2,2),size=(1150,760),plot_title=title,margin=5Plots.mm)
+    fig=plot(ptime,pcalls,pbar,pbox;layout=(2,2),size=(1150,840),plot_title=title,margin=5Plots.mm)
     slug="$(f)_$(o)_n$(n)_$(b)s"
     savefig(fig,joinpath(OUT,slug*".png"))
     println(slug);flush(stdout)
@@ -180,9 +193,10 @@ end
 close(curveio)
 for ((n,axis),panels) in article_panels
     # Linear order: assignment quadratic/entropic, then partition quadratic/entropic.
-    fig=plot(panels...;layout=(2,2),size=(1150,750),margin=5Plots.mm,plot_title="n=$n | 200-second runs | mean and pointwise 95% bootstrap CI")
+    fig=plot(panels...;layout=(2,2),size=(1150,870),margin=5Plots.mm,plot_title="n=$n | 200-second runs | mean and pointwise 95% bootstrap CI")
     savefig(fig,joinpath(OUT,"article_n$(n)_$(axis).png"))
     savefig(fig,joinpath(OUT,"article_n$(n)_$(axis).svg"))
+    savefig(fig,joinpath(OUT,"article_n$(n)_$(axis).pdf"))
 end
 for f in ("assignment","partition"),o in ("quadratic","entropic"),n in (10,12,14)
     p=plot(title="$f | $o | n=$n | mean +/- task SD",xlabel="Independent time budget (s)",ylabel="Final objective calls (log scale)",yscale=:log10,xticks=(1:3,["10","50","200"]),legend=:topleft,size=(800,380),margin=5Plots.mm)

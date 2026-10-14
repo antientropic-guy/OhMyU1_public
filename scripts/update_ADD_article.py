@@ -12,8 +12,8 @@ We use graph distance (\cref{eq:graph_distance}) to balance cost-based
 selection with exploration of the charge graph. Assignment admits a simple
 uniform feasible sampler based on random permutations, so this experiment
 examines which available data to learn from, rather than how to obtain
-feasible data. Unlike the fixed-topology loop in \cref{alg:tt_generative},
-ADD reconstructs the TT from the selected data at every outer iteration.
+feasible data. In the ADD variant of \cref{alg:tt_generative},
+we reconstruct the TT from the selected data at every outer iteration.
 We compare the following selection rules on a candidate pool $S$, with
 selection quota $\mu$ and charge history $\mathcal H$:
 \begin{enumerate}

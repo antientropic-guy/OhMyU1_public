@@ -38,7 +38,7 @@ function locality_add_arm(problem,sampler,initial,sp,seed,strategy;external=5000
         OhMyU1.normalize!(mps)
         Random.seed!(seed+10_000_000k)
         samples=zeros(Int,problem.num_vars,sp.NUM_MPS_SAMPLES)
-        OhMyU1.sample_nondeg!(mps,samples,sp.NUM_MPS_SAMPLES)
+        OhMyU1.sample_nondeg!(mps,samples,sp.NUM_MPS_SAMPLES;backend=:table)
         @assert all(problem.A*samples .== problem.b)
         model=unique(hcat(samples,best_samples);dims=2)
         model,model_costs=sort_and_truncate(model,cost,size(model,2))
@@ -71,7 +71,7 @@ function locality_add_arm(problem,sampler,initial,sp,seed,strategy;external=5000
             elapsed_seconds=(time_ns()-start)/1e9))
         T,stats.num_principal_new,stats.max_graph_dist,stats.min_graph_dist,stats.num_to_keep_worst=
             OhMyU1.pick_diverse_data!(mps,pool,history,OhMyU1.graph_dist_global!,strategy,
-                cost,sp,false,k;mixed_proportion=.4,rank_weight=.4)
+                cost,sp,false,k;mixed_proportion=PARTITION_ADD_WEIGHT,rank_weight=PARTITION_ADD_WEIGHT)
         best_set=Set(eachcol(best_samples))
         keep=findall(j->view(T,:,j) ∉ best_set,axes(T,2))
         T=hcat(best_samples,T[:,keep])
@@ -88,21 +88,23 @@ function locality_code_hashes()
     Dict(f=>bytes2hex(sha256(read(joinpath(PARTITION_ROOT,f)))) for f in unique(files))
 end
 
-function run_locality(span;objective,smoke=false,grid=false,elements=18,n=15,instances=grid ? (1:15) : (1:40))
+function run_locality(span;objective,smoke=false,grid=false,elements=18,n=15,instances=grid ? (1:15) : (1:40),
+        modes=("EELS","ADD"),output_root=nothing,shard_suffix="",extra_hashes=Dict{String,String}())
     objective in ("linear","entropic") || error("Choose linear or entropic")
     grid || @assert elements==18 && n==15
     span in LOCALITY_SPANS || error("Unknown span")
+    all(m->m in ("EELS","ADD"),modes) && allunique(modes) && !isempty(modes) || error("Invalid modes")
     Threads.nthreads()==1 || error("Run with --threads=1; parallelism is across isolated Slurm jobs")
     sp=SolverParams(NUM_FEASIBLE_SAMPLES=smoke ? 40 : 500,NUM_MPS_SAMPLES=smoke ? 100 : 5000,
         NUM_GLOBAL_ITER=smoke ? 2 : 15,NUM_SWEEP_ITER=1,LINK_DEGENERACY=1,
         LEARNING_RATE=.05,UTILITY_FRACTION=.05,KEEP_NUM_WORST=0.)
     external=smoke ? 100 : 5000
-    root=joinpath(grid ? LOCALITY_GRID_ROOT : LOCALITY_ROOT,smoke ? "smoke_gradient_v2" : "results_gradient_v2",objective)
-    suffix=grid ? "span$(span)_m$(elements)_n$(n)" : "span$(span)"
+    root=isnothing(output_root) ? joinpath(grid ? LOCALITY_GRID_ROOT : LOCALITY_ROOT,smoke ? "smoke_gradient_v2" : "results_gradient_v2",objective) : joinpath(output_root,objective)
+    suffix=(grid ? "span$(span)_m$(elements)_n$(n)" : "span$(span)")*shard_suffix
     mkpath(root);lockdir=joinpath(root,".running_$suffix")
     mkdir(lockdir) # atomic refusal of a second writer, including direct Julia runs
     try
-        hashes=locality_code_hashes()
+        hashes=merge(locality_code_hashes(),extra_hashes)
         for i in instances
             input=grid ? grid_path(span,elements,n,i) : locality_path(span,i);d=load(input);p=d["instance"]
             @assert (d["specification"].span,d["specification"].i)==(span,i)
@@ -112,15 +114,16 @@ function run_locality(span;objective,smoke=false,grid=false,elements=18,n=15,ins
             rawhash=PartitionEELS.training_fingerprint(initial)
             problem=OptimizationProblem(A=p.A,b=p.b,cost_function=partition_cost(d["objectives"],objective,length(p.b)),name="locality")
             seed=d["specification"].seed+100_000_000
-            for mode in ("EELS","ADD")
+            for mode in modes
                 path=joinpath(root,"res_$(mode)_$(objective)_$(suffix).jld2")
                 arm=mode=="EELS" ? "EELS" : PARTITION_ADD_STRATEGY
-                config=(;protocol=2,span,elements,n,objective,grid,mode,external=mode=="EELS" ? 0 : external,
+                config=(;protocol=3,span,elements,n,objective,grid,mode,external=mode=="EELS" ? 0 : external,
                     parameters=NamedTuple{fieldnames(SolverParams)}(Tuple(getfield(sp,f) for f in fieldnames(SolverParams))),
-                    code_hashes=hashes,gamma=1,filter_weight=.4,julia_version=string(VERSION),
+                    code_hashes=hashes,gamma=1,filter_weight=PARTITION_ADD_WEIGHT,
+                    sampling_backend=mode=="ADD" ? "table" : "legacy",julia_version=string(VERSION),
                     incumbent="best of all evaluated candidates including final external batch")
                 res_dict=Dict{String,Any}("best_cost"=>Dict(n=>Dict{Int,SolverStatistics}()),
-                    arm=>(mode=="EELS" ? Dict(n=>Dict{Int,SolverStatistics}()) : Dict(.4=>Dict(n=>Dict{Int,SolverStatistics}()))))
+                    arm=>(mode=="EELS" ? Dict(n=>Dict{Int,SolverStatistics}()) : Dict(PARTITION_ADD_WEIGHT=>Dict(n=>Dict{Int,SolverStatistics}()))))
                 diagnostics=Dict{Int,Any}()
                 if isfile(path)
                     saved=load(path);saved["configuration"]==config || error("Checkpoint/code mismatch")
@@ -153,7 +156,7 @@ function run_locality(span;objective,smoke=false,grid=false,elements=18,n=15,ins
                     @assert all(diff(v.stats.learning_curve).<=1e-12)
                 end
                 res_dict["best_cost"][n][i]=pair["best_cost"].stats
-                branch=mode=="EELS" ? res_dict[arm] : res_dict[arm][.4]
+                branch=mode=="EELS" ? res_dict[arm] : res_dict[arm][PARTITION_ADD_WEIGHT]
                 branch[n][i]=pair[arm].stats
                 diagnostics[i]=(;input_sha256=input_sha,initial_sha256=rawhash,seed,
                     structural=d["structural"],cpu=Sys.CPU_NAME,threads=Threads.nthreads(),

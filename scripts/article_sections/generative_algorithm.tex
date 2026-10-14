@@ -1,0 +1,18 @@
+\begin{algorithm}
+\caption{Generative optimization with a tensor train}
+\label{alg:tt_generative}
+\begin{algorithmic}[1]
+\REQUIRE Initial feasible data $\mathcal T_0$, sampling budget $K$, iteration budget $T$, selection/memory policy $\mathcal S_t$, optional diversification $\mathcal D_t$
+\STATE Initialize $P_\theta$ and incumbent $x^\star$ from $\mathcal T_0$; initialize policy state $H$
+\FOR{$t=1,\ldots,T$}
+    \STATE Sample $K$ candidates from $P_\theta$; optionally augment the pool from available feasible-data sources
+    \STATE Evaluate candidates as prescribed; update $x^\star$ using evaluated feasible points
+    \STATE $(\mathcal T_{\mathrm{new}},H)\gets\mathcal S_t(\text{candidates},\mathcal T_0,H)$
+    \STATE $\theta\gets\mathcal D_t(\theta,\mathcal T_{\mathrm{new}},H)$ \COMMENT{Identity if omitted}
+    \STATE Assign normalized weights $w_i$ to $x^{(i)}\in\mathcal T_{\mathrm{new}}$
+    \STATE Update $\theta$ by minimizing $\displaystyle -\sum_{x^{(i)}\in\mathcal T_{\mathrm{new}}}w_i\log P_\theta(x^{(i)})$
+\ENDFOR
+\STATE \textbf{return} $x^\star$
+\end{algorithmic}
+\end{algorithm}
+
