@@ -132,3 +132,6 @@ AGENTS.md
 /data/eels_optimization/gamma1/
 /data/set_partitioning/test/
 /data/set_partitioning/locality_v1/
+
+# Local archives and working artifacts.
+/_local/
