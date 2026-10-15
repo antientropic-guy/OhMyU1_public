@@ -10,8 +10,13 @@ function add_relative_panel(a,b;title="",limits=nothing)
         xlabel="Number of binary variables",ylabel="Relative improvement (%)",
         yformatter=x->@sprintf("%.1f",x),title=title,legend=:topleft)
     hline!(p,[0.];color=:gray,linestyle=:dash,label="")
-    plot!(p,1:5,vec(median(grouped;dims=1));marker=:diamond,color=palette(:default)[3],markercolor=palette(:default)[3],label="Group median",linewidth=2)
-    plot!(p,1:5,vec(mean(grouped;dims=1));marker=:circle,color=palette(:default)[2],markercolor=palette(:default)[2],label="Group average",linewidth=2)
+    # Explicit marker styling also controls the legend symbols.
+    plot!(p,1:5,vec(median(grouped;dims=1));marker=:diamond,markersize=2.5,
+        color=palette(:default)[3],markercolor=palette(:default)[3],
+        markerstrokecolor=palette(:default)[3],markerstrokewidth=.3,label="Group median",linewidth=1.5)
+    plot!(p,1:5,vec(mean(grouped;dims=1));marker=:circle,markersize=2.5,
+        color=palette(:default)[2],markercolor=palette(:default)[2],
+        markerstrokecolor=palette(:default)[2],markerstrokewidth=.3,label="Group average",linewidth=1.5)
     isnothing(limits) || ylims!(p,limits)
     p
 end

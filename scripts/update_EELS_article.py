@@ -30,7 +30,6 @@ def pvalue(x):
 
 def main(source, output):
     summary = {r["objective"]: r for r in read("summary.csv")}
-    distributions = {int(r["variables"]): r for r in read("distributions.csv")}
     text = source.read_text(encoding="utf-8")
     main_text = r"""\subsection{EELS impact on optimization results}
 \label{subsec:eels_optimization}
@@ -79,9 +78,7 @@ of 250 pairs, respectively. Both advantages remain significant after the
 Holm correction. However, there are @LINEAR_TIES@ and @QUADRATIC_TIES@
 exact ties, and the pooled medians are only @LINEAR_MEDIAN@\% and
 @QUADRATIC_MEDIAN@\% after rounding. Thus the improvement is heterogeneous,
-not a uniform gain on every instance. For quadratic objectives the group
-medians range from 0.0\% to 2.2\%; the contrasting distributions for 225 and
-256 variables are detailed in \cref{app:eels_distributions}. These results
+not a uniform gain on every instance. These results
 support the one-time expressibility enhancement under equal sampling and
 iteration settings; they do not establish a wall-time advantage or robustness
 across repeated optimization seeds on the same task.
@@ -137,79 +134,12 @@ favor EELS.}
     start = text.index(r"\subsection{EELS impact on optimization results}")
     end = text.index(r"\subsection {ADD impact on optimization results}", start)
     text = text[:start] + main_text + text[end:]
-    appendix = r"""\section{Quadratic EELS: distributions within problem-size groups}
-\label{app:eels_distributions}
-\Cref{fig:eels_group_distributions} resolves the persistent-TT results in
-\cref{fig:eels_optimization} for $N=225$ and $N=256$ binary variables.
-Each histogram contains all 50 paired relative improvements $R$ from
-\cref{eq:eels_relative_improvement}, with common one-percentage-point bins
-and identical axes. The orange line marks the group mean, the purple line
-the median, and dashed lines locate the box edges $Q_1$ and $Q_3$.
-\Cref{tab:eels_group_distributions} gives their numerical values.
-
-For $N=225$, there are @225_LOSSES@ negative differences, @225_TIES@ exact
-ties, and @225_WINS@ positive differences. Zeros occupy positions 1--20
-in ascending order: $Q_1=0.0\%$, but positions 25 and 26 are positive, so
-the median is @225_MEDIAN@\%. For $N=256$, the counts are @256_LOSSES@,
-@256_TIES@, and @256_WINS@, respectively. Zeros occupy positions 2--28,
-so both $Q_1$ and the median are exactly zero. Their shared line is
-identified explicitly in the figure. These features are consequences of
-the observed ties, not plotting artifacts. Positive tails yield means of
-@225_MEAN@\% and @256_MEAN@\%, respectively.
-
-Quantiles use linear interpolation on the sorted observations; for 50
-points, the median averages positions 25 and 26, and $Q_1$ lies between
-positions 13 and 14. Histogram bins include nearby nonzero observations,
-so the height of the bin centered at zero is not an exact tie count.
-All displayed percentages are rounded to one decimal place, while
-quantiles, means, and tests use unrounded data.
-
-\begin{table}[t]
-\centering
-\caption{Quadratic EELS relative improvements (\%) under the persistent-TT
-protocol. Each row contains 50 pairs; W/T/L denotes wins/ties/losses.}
-\label{tab:eels_group_distributions}
-\small
-\begin{tabular}{rrrrrr}
-\toprule
-$N$ & W/T/L & Mean & $Q_1$ & Median & $Q_3$ \\
-\midrule
-@DISTRIBUTION_ROWS@
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{figure*}[t]
-\centering
-\begin{subfigure}{0.86\textwidth}
-\includegraphics[width=\linewidth]{pictures/test_EELS_Quadratic_distribution_225.pdf}
-\caption{225 variables: @225_TIES@ exact ties; positive median.}
-\end{subfigure}
-\par\medskip
-\begin{subfigure}{0.86\textwidth}
-\includegraphics[width=\linewidth]{pictures/test_EELS_Quadratic_distribution_256.pdf}
-\caption{256 variables: @256_TIES@ exact ties; median and $Q_1$ coincide at zero.}
-\end{subfigure}
-\caption{Distributions of quadratic EELS improvements. The vertical lines
-locate the mean, median, and box edges from the same observations as the
-main-text boxes. Positive values favor EELS; both panels share bins and axes.}
-\label{fig:eels_group_distributions}
-\end{figure*}
-
-"""
-    distribution_rows = []
-    for N in (225, 256):
-        r = distributions[N]
-        for suffix, field in (("MEAN", "mean_pct"), ("MEDIAN", "median_pct"), ("WINS", "wins"), ("TIES", "ties"), ("LOSSES", "losses")):
-            v = number(r[field]) if suffix in ("MEAN", "MEDIAN") else r[field]
-            appendix = appendix.replace(f"@{N}_{suffix}@", v)
-        distribution_rows.append(f"{N} & {r['wins']}/{r['ties']}/{r['losses']} & " + " & ".join(number(r[k]) for k in ("mean_pct", "q1_pct", "median_pct", "q3_pct")) + r" \\")
-    # The explanatory order statistics are specific to this audited snapshot.
-    assert (distributions[225]["losses"], distributions[225]["ties"], distributions[256]["losses"], distributions[256]["ties"]) == ("0", "20", "1", "27")
-    appendix = appendix.replace("@DISTRIBUTION_ROWS@", "\n".join(distribution_rows))
-    start = text.index(r"\section{Quadratic EELS: distributions within problem-size groups}")
-    end = text.index(r"\section{Complete ADD strategy and weight comparison}", start)
-    text = text[:start] + appendix + text[end:]
+    # Remove the retired boxplot-diagnostic appendix when updating older drafts.
+    heading = r"\section{Quadratic EELS: distributions within problem-size groups}"
+    if heading in text:
+        start = text.index(heading)
+        end = text.index(r"\section{Complete ADD strategy and weight comparison}", start)
+        text = text[:start] + text[end:]
     # The PROTES benchmark intentionally retains its separately measured old
     # protocol; remove the now-false claim that it uses the same EELS updates.
     text = text.replace("These are\nthe article's EELS updates with the fixed 20-iteration cap replaced by a\nwall-time limit; realized iteration counts are reported below.",
@@ -225,8 +155,6 @@ main-text boxes. Positive values favor EELS; both panels share bins and axes.}
     for source_name, destination_name in {
         "EELS_linear.pdf": "test_EELS_Linear.pdf",
         "EELS_quadratic.pdf": "test_EELS_Quadratic.pdf",
-        "EELS_quadratic_distribution_225.pdf": "test_EELS_Quadratic_distribution_225.pdf",
-        "EELS_quadratic_distribution_256.pdf": "test_EELS_Quadratic_distribution_256.pdf",
     }.items():
         shutil.copy2(DATA / source_name, picture_dir / destination_name)
     print(output)

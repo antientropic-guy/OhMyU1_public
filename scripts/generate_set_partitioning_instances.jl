@@ -1,6 +1,4 @@
 #!/usr/bin/env julia
-using Pkg
-Pkg.activate(normpath(joinpath(@__DIR__,"..")))
 using OhMyU1, Random, JLD2, SHA
 using OhMyU1: strip_partition_instance, ExactPartitionSampler
 

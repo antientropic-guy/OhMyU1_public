@@ -6,6 +6,48 @@ Run from the repository root on the cluster:
 bash scripts/bash/run_ADD_locality_transfer.sh
 ```
 
+## Recovery of the interrupted activation-lock run
+
+After stopping the old allocations and updating the checkout, resume the
+`a372376ce3047947` run with its 744 complete pairs:
+
+```bash
+bash scripts/bash/run_ADD_locality_transfer.sh --resume-from a372376ce3047947 --expected-completed 744
+```
+
+This first runs a sequential checkpoint audit without optimization or Pkg
+operations. It requires the old implementation hashes to match the current
+implementation except for the exact removal of redundant `using Pkg` and
+`Pkg.activate` lines. Numerical parameters, Julia version, frozen input hashes,
+initial training fingerprints, completed histories, feasible incumbents and
+their objective values are checked. A mismatch aborts before Slurm submission.
+If the actual completed-file count differs, inspect it and explicitly supply
+the correct count; incomplete `.tmp` files are never imported.
+
+The original directory remains unchanged. Validated results are copied into
+the current implementation's output directory, with the original file hash
+and code hashes retained in `recovery_provenance`. Repeating this migration is
+idempotent. The ordinary worker resume logic then skips those pairs and computes
+only missing pairs (201 if exactly 744 were saved). All four allocations are
+submitted with the original task assignment; fully completed workers exit after
+checking their checkpoints. Old `.running_*` directories are not copied or
+deleted. Final analysis must use the new output directory printed by recovery,
+not combine old and new directories and count the copied results twice.
+
+Workers now rely on `--project=.` and do not call `Pkg.activate`. Package
+installation remains a single login-process operation for fresh launches only;
+the recovery command skips it entirely. Invoke the Julia scripts with the project
+explicitly selected, including when running the generators directly.
+
+Run the isolated recovery regression checks locally:
+
+```bash
+julia --startup-file=no --compiled-modules=existing --project=. --threads=1,0 scripts/test_resume_ADD_locality_transfer.jl
+```
+
+The checks use synthetic solver records on one frozen input; no optimization or
+production-result mutation is performed.
+
 This submits four simultaneous exclusive c32m384 allocations, each with 32
 single-threaded Julia processes on physical cores and 380000 MB memory. BLAS is
 single-threaded. No optimization runs on the login node. No inputs are regenerated.

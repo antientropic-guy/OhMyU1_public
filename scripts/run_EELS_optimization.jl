@@ -10,9 +10,7 @@
 # Protocol 3: construct once, then sample and train on a bounded fresh elite set.
 # The original run_arm is retained for existing non-assignment callers only.
 
-using Pkg
 const ROOT = normpath(joinpath(@__DIR__, ".."))
-Pkg.activate(ROOT)
 using OhMyU1, JLD2, Random, LinearAlgebra, Statistics, SHA
 using OhMyU1: SolverParams, SolverStatistics, OptimizationProblem,
     assignment_matrix, fill_assignment_vectors!, build_mps_from_feasible_samples,
