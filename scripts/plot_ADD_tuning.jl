@@ -37,8 +37,9 @@ function plot_add_article(report)
     panels=[]
     for slug in ("gdf","mixed","weighted_rank"), objective in ("linear","quadratic")
         d=report.results[objective];w=chosen[(slug,objective)]
+        weight_name=Dict("gdf"=>"filter weight", "mixed"=>"mixing weight", "weighted_rank"=>"rank weight")[slug]
         p=add_relative_panel(d.baseline,d.costs[(slug,w)];
-            title="$(titlecase(objective)): $(ADD_LABELS[slug]), w = $w",limits)
+            title="$(titlecase(objective)): $(ADD_LABELS[slug]), $weight_name = $w",limits)
         plot!(p;legendfontsize=8,tickfontsize=9,guidefontsize=10,titlefontsize=12)
         push!(panels,p)
     end

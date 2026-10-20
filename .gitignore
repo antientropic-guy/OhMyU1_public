@@ -73,8 +73,9 @@ tmp/
 # patch:
 *.patch
 
-# text explanations:
+# text and tex explanations:
 *.txt
+*.tex
 
 # instructions for agents:
 AGENTS.md
@@ -135,3 +136,33 @@ AGENTS.md
 
 # Local archives and working artifacts.
 /_local/
+
+# python cache and scripts:
+__pycache__/
+*.py[cod]
+
+# Equal-time comparison launcher and transient run artifacts.
+!/scripts/bash/run_time_budget.sh
+/data/time_budget_v1/logs/
+/data/time_budget_v1/**/*.tmp
+/data/time_budget_v1/**/.running/
+
+# Private manuscript editing, assembly, and publication-formatting helpers.
+/scripts/**/*article*.py
+/scripts/**/render*article*.jl
+/scripts/protes/plot_article_benchmarks.jl
+/scripts/article_sections/
+
+# Local analysis builders and the preliminary Windows runtime pilot.
+# Keep rendered notebooks, analysis tables, and figures versioned.
+/data/add_runtime_pilot_20261020/
+/data/add_runtime_pilot_20261020_memory_pressure_discarded/
+/scripts/add_runtime_report.py
+/scripts/analyze_ADD_locality_transfer.py
+/scripts/build_ADD_locality_notebook.py
+/scripts/benchmark_ADD_runtime.jl
+/scripts/plot_ADD_locality_transfer.jl
+/scripts/plot_ADD_runtime.jl
+/scripts/report_ADD_locality_transfer.jl
+/scripts/run_ADD_runtime_local.py
+/scripts/time_budget/collect.jl

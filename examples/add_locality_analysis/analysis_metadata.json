@@ -1,0 +1,14 @@
+{
+  "seed": 20261015,
+  "bootstrap_replicates": 5000,
+  "permutations": 5000,
+  "pooled_spearman_rho": 0.4349312067698779,
+  "pooled_spearman_p": 6.852182814370379e-45,
+  "sign_test_p": 6.786456717613916e-75,
+  "minimum_abs_baseline": 0.841908077758801,
+  "minimum_nonzero_abs_difference": 0.00015405738631613097,
+  "tolerance_1e_10_wins": 305,
+  "tolerance_1e_10_ties": 628,
+  "tolerance_1e_10_losses": 12,
+  "pooled_absolute_mean": 0.0209857690639747
+}
